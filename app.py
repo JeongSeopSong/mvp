@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import copy
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -27,6 +29,25 @@ from utils.charts import (
     cumulative_cash_flow_chart,
     line_chart,
 )
+
+BASE_DIR = Path(__file__).resolve().parent
+FONT_DIR = BASE_DIR / "assets" / "fonts"
+SLIDE_W = 1920
+SLIDE_H = 1080
+SLIDE_MARGIN = 92
+COLORS = {
+    "bg": "#F7F5F2",
+    "paper": "#FFFFFF",
+    "ink": "#222222",
+    "muted": "#6B6B6B",
+    "line": "#D8D2CB",
+    "dark": "#2D2D2D",
+    "red": "#D04A02",
+    "orange": "#EB8C00",
+    "yellow": "#FFB600",
+    "rose": "#DB536A",
+    "green": "#2E7D32",
+}
 
 DEFAULT_ASSUMPTIONS = {
     "business_name": "신규 사업",
@@ -238,6 +259,300 @@ def pdf_filename(assumptions: dict[str, Any]) -> str:
     safe_name = "".join(ch if ch.isalnum() or ch in (" ", "_", "-") else "_" for ch in raw_name).strip()
     return f"{safe_name.replace(' ', '_') or 'business_report'}_report.pdf"
 
+
+def load_slide_fonts() -> dict[str, ImageFont.FreeTypeFont]:
+    """Pretendard 기반 슬라이드 폰트를 로드한다."""
+    regular = FONT_DIR / "Pretendard-Regular.otf"
+    semibold = FONT_DIR / "Pretendard-SemiBold.otf"
+    bold = FONT_DIR / "Pretendard-Bold.otf"
+    return {
+        "title": ImageFont.truetype(str(bold), 60),
+        "subtitle": ImageFont.truetype(str(regular), 26),
+        "page_title": ImageFont.truetype(str(bold), 38),
+        "section": ImageFont.truetype(str(semibold), 25),
+        "kpi_label": ImageFont.truetype(str(semibold), 20),
+        "kpi_value": ImageFont.truetype(str(bold), 34),
+        "body": ImageFont.truetype(str(regular), 19),
+        "body_sm": ImageFont.truetype(str(regular), 16),
+        "body_xs": ImageFont.truetype(str(regular), 13),
+        "table_head": ImageFont.truetype(str(semibold), 17),
+        "table": ImageFont.truetype(str(regular), 15),
+        "table_bold": ImageFont.truetype(str(semibold), 15),
+        "chart": ImageFont.truetype(str(regular), 14),
+        "chart_bold": ImageFont.truetype(str(semibold), 15),
+        "footer": ImageFont.truetype(str(regular), 13),
+    }
+
+
+def hex_color(name_or_hex: str) -> str:
+    """색상 이름 또는 hex 값을 반환한다."""
+    return COLORS.get(name_or_hex, name_or_hex)
+
+
+def make_slide(title: str, subtitle: str = "", page_no: int | None = None, fonts: dict[str, ImageFont.FreeTypeFont] | None = None) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    """공통 슬라이드 배경과 헤더를 만든다."""
+    fonts = fonts or load_slide_fonts()
+    image = Image.new("RGB", (SLIDE_W, SLIDE_H), hex_color("bg"))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([0, 0, SLIDE_W, 16], fill=hex_color("dark"))
+    draw.rectangle([0, 0, 430, 16], fill=hex_color("red"))
+    draw.rectangle([430, 0, 650, 16], fill=hex_color("orange"))
+    draw.text((SLIDE_MARGIN, 58), title, font=fonts["page_title"], fill=hex_color("ink"))
+    if subtitle:
+        draw.text((SLIDE_MARGIN, 108), subtitle, font=fonts["body"], fill=hex_color("muted"))
+    draw.line([SLIDE_MARGIN, SLIDE_H - 58, SLIDE_W - SLIDE_MARGIN, SLIDE_H - 58], fill=hex_color("line"), width=2)
+    draw.text((SLIDE_MARGIN, SLIDE_H - 42), "Business Profitability Assessment", font=fonts["footer"], fill=hex_color("muted"))
+    if page_no is not None:
+        draw.text((SLIDE_W - SLIDE_MARGIN - 35, SLIDE_H - 42), str(page_no), font=fonts["footer"], fill=hex_color("muted"))
+    return image, draw
+
+
+def text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> tuple[int, int]:
+    """텍스트 크기를 반환한다."""
+    bbox = draw.textbbox((0, 0), str(text), font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def draw_wrapped_text(
+    draw: ImageDraw.ImageDraw,
+    text: Any,
+    xy: tuple[int, int],
+    max_width: int,
+    font: ImageFont.FreeTypeFont,
+    fill: str,
+    line_gap: int = 6,
+    max_lines: int | None = None,
+) -> int:
+    """한글/영문 텍스트를 박스 너비에 맞게 줄바꿈해 그린다."""
+    words = str(text or "").replace("\n", " ").split(" ")
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if text_size(draw, candidate, font)[0] <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+        while text_size(draw, current, font)[0] > max_width and len(current) > 1:
+            cut = len(current) - 1
+            while cut > 1 and text_size(draw, current[:cut] + "...", font)[0] > max_width:
+                cut -= 1
+            lines.append(current[:cut] + "...")
+            current = current[cut:]
+    if current:
+        lines.append(current)
+    if max_lines is not None and len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while text_size(draw, last + "...", font)[0] > max_width and len(last) > 1:
+            last = last[:-1]
+        lines[-1] = last + "..."
+    x, y = xy
+    line_height = text_size(draw, "Ag", font)[1] + line_gap
+    for line in lines:
+        draw.text((x, y), line, font=font, fill=fill)
+        y += line_height
+    return y
+
+
+def rounded_card(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], fill: str = "paper", outline: str = "line", radius: int = 14) -> None:
+    """공통 카드 박스를 그린다."""
+    draw.rounded_rectangle(box, radius=radius, fill=hex_color(fill), outline=hex_color(outline), width=2)
+
+
+def format_million(value: Any, suffix: str = "백만원") -> str:
+    """금액을 백만원 단위로 표기한다."""
+    try:
+        amount = float(value) / 1_000_000
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f"{amount:,.1f}{suffix}"
+
+
+def format_number_1(value: Any) -> str:
+    """숫자를 소수점 1자리로 표기한다."""
+    try:
+        return f"{float(value):,.1f}"
+    except (TypeError, ValueError):
+        return "0.0"
+
+
+def pct_display(value: Any, already_percent: bool = False) -> str:
+    """비율을 % 단위로 표기한다."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    if not already_percent:
+        number *= 100
+    return f"{number:,.1f}%"
+
+
+def draw_kpi_card(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    label: str,
+    value: str,
+    note: str,
+    fonts: dict[str, ImageFont.FreeTypeFont],
+    accent: str = "red",
+) -> None:
+    """KPI 카드."""
+    rounded_card(draw, box)
+    x1, y1, x2, y2 = box
+    draw.rectangle([x1, y1, x1 + 10, y2], fill=hex_color(accent))
+    draw.text((x1 + 26, y1 + 20), label, font=fonts["kpi_label"], fill=hex_color("muted"))
+    draw.text((x1 + 26, y1 + 54), value, font=fonts["kpi_value"], fill=hex_color("ink"))
+    draw_wrapped_text(draw, note, (x1 + 26, y1 + 100), x2 - x1 - 48, fonts["body_xs"], hex_color("muted"), max_lines=2)
+
+
+def draw_small_table(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    title: str,
+    headers: list[str],
+    rows: list[list[Any]],
+    col_widths: list[float],
+    fonts: dict[str, ImageFont.FreeTypeFont],
+    money_cols: set[int] | None = None,
+    highlight_rows: set[int] | None = None,
+    max_rows: int | None = None,
+) -> None:
+    """슬라이드용 가독성 높은 표."""
+    money_cols = money_cols or set()
+    highlight_rows = highlight_rows or set()
+    if max_rows is not None:
+        rows = rows[:max_rows]
+    x1, y1, x2, y2 = box
+    rounded_card(draw, box)
+    draw.text((x1 + 22, y1 + 18), title, font=fonts["section"], fill=hex_color("ink"))
+    table_x = x1 + 22
+    table_y = y1 + 58
+    table_w = x2 - x1 - 44
+    available_h = y2 - table_y - 20
+    row_count = max(len(rows) + 1, 1)
+    row_h = max(34, min(48, available_h // row_count))
+    widths = [int(table_w * width / sum(col_widths)) for width in col_widths]
+    widths[-1] += table_w - sum(widths)
+    draw.rounded_rectangle([table_x, table_y, table_x + table_w, table_y + row_h], radius=8, fill=hex_color("dark"))
+    cx = table_x
+    for idx, header in enumerate(headers):
+        draw_wrapped_text(draw, header, (cx + 8, table_y + 9), widths[idx] - 16, fonts["table_head"], "#FFFFFF", line_gap=2, max_lines=1)
+        cx += widths[idx]
+    for row_idx, row in enumerate(rows):
+        y = table_y + row_h * (row_idx + 1)
+        fill = "#F6EEE8" if row_idx in highlight_rows else ("#FFFFFF" if row_idx % 2 == 0 else "#FAFAFA")
+        draw.rectangle([table_x, y, table_x + table_w, y + row_h], fill=fill)
+        cx = table_x
+        for col_idx, cell in enumerate(row):
+            text = str(cell)
+            font = fonts["table_bold"] if row_idx in highlight_rows else fonts["table"]
+            if col_idx in money_cols:
+                tw, _ = text_size(draw, text, font)
+                draw.text((cx + widths[col_idx] - tw - 8, y + 10), text, font=font, fill=hex_color("ink"))
+            else:
+                draw_wrapped_text(draw, text, (cx + 8, y + 9), widths[col_idx] - 16, font, hex_color("ink"), line_gap=2, max_lines=2)
+            cx += widths[col_idx]
+        draw.line([table_x, y, table_x + table_w, y], fill=hex_color("line"), width=1)
+    if max_rows is not None and len(rows) == max_rows:
+        pass
+
+
+def series_millions(series: pd.Series) -> list[float]:
+    """Series를 백만원 리스트로 변환한다."""
+    return [float(value) / 1_000_000 for value in series.values]
+
+
+def draw_line_chart_slide(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    title: str,
+    series_dict: dict[str, pd.Series],
+    fonts: dict[str, ImageFont.FreeTypeFont],
+    unit_label: str = "단위: 백만원",
+) -> None:
+    """슬라이드용 라인 차트."""
+    rounded_card(draw, box)
+    x1, y1, x2, y2 = box
+    draw.text((x1 + 22, y1 + 18), title, font=fonts["section"], fill=hex_color("ink"))
+    draw.text((x2 - 120, y1 + 24), unit_label, font=fonts["body_xs"], fill=hex_color("muted"))
+    px1, py1, px2, py2 = x1 + 72, y1 + 80, x2 - 36, y2 - 54
+    values_by_name = {name: series_millions(series) for name, series in series_dict.items()}
+    labels = list(next(iter(series_dict.values())).index) if series_dict else []
+    all_values = [value for values in values_by_name.values() for value in values]
+    min_value, max_value = chart_bounds(all_values)
+    zero_y = int(scale_y(0, min_value, max_value, py1, py2 - py1))
+    draw.line([px1, py2, px2, py2], fill=hex_color("line"), width=2)
+    draw.line([px1, py1, px1, py2], fill=hex_color("line"), width=2)
+    if py1 <= zero_y <= py2:
+        draw.line([px1, zero_y, px2, zero_y], fill="#C8C8C8", width=1)
+    palette = [hex_color("red"), hex_color("orange"), hex_color("rose"), "#6A6A6A"]
+    for s_idx, (name, values) in enumerate(values_by_name.items()):
+        points = []
+        for idx, value in enumerate(values):
+            x = px1 + int((px2 - px1) * idx / max(len(values) - 1, 1))
+            y = int(scale_y(value, min_value, max_value, py1, py2 - py1))
+            y = py2 - (y - py1)
+            points.append((x, y))
+        for p1, p2 in zip(points, points[1:]):
+            draw.line([p1, p2], fill=palette[s_idx % len(palette)], width=5)
+        for point in points:
+            draw.ellipse([point[0] - 6, point[1] - 6, point[0] + 6, point[1] + 6], fill=palette[s_idx % len(palette)])
+        draw.rectangle([x1 + 24 + s_idx * 170, y2 - 34, x1 + 44 + s_idx * 170, y2 - 20], fill=palette[s_idx % len(palette)])
+        draw.text((x1 + 52 + s_idx * 170, y2 - 38), name, font=fonts["chart_bold"], fill=hex_color("muted"))
+    for idx, label in enumerate(labels):
+        x = px1 + int((px2 - px1) * idx / max(len(labels) - 1, 1))
+        draw.text((x - 20, py2 + 14), str(label).replace("Year ", "Y"), font=fonts["chart"], fill=hex_color("muted"))
+    draw.text((x1 + 18, py1 - 4), f"{max_value:,.1f}", font=fonts["chart"], fill=hex_color("muted"))
+    draw.text((x1 + 18, py2 - 12), f"{min_value:,.1f}", font=fonts["chart"], fill=hex_color("muted"))
+
+
+def draw_bar_chart_slide(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    title: str,
+    series_dict: dict[str, pd.Series],
+    fonts: dict[str, ImageFont.FreeTypeFont],
+) -> None:
+    """슬라이드용 그룹 막대 차트."""
+    rounded_card(draw, box)
+    x1, y1, x2, y2 = box
+    draw.text((x1 + 22, y1 + 18), title, font=fonts["section"], fill=hex_color("ink"))
+    draw.text((x2 - 120, y1 + 24), "단위: 백만원", font=fonts["body_xs"], fill=hex_color("muted"))
+    px1, py1, px2, py2 = x1 + 72, y1 + 80, x2 - 36, y2 - 54
+    names = list(series_dict.keys())
+    labels = list(next(iter(series_dict.values())).index) if series_dict else []
+    values_by_name = {name: series_millions(series) for name, series in series_dict.items()}
+    all_values = [value for values in values_by_name.values() for value in values]
+    min_value, max_value = chart_bounds(all_values)
+    zero_y_raw = scale_y(0, min_value, max_value, py1, py2 - py1)
+    zero_y = py2 - int(zero_y_raw - py1)
+    draw.line([px1, zero_y, px2, zero_y], fill=hex_color("line"), width=2)
+    group_w = (px2 - px1) / max(len(labels), 1)
+    bar_w = min(28, group_w / max(len(names), 1) * 0.55)
+    palette = [hex_color("red"), hex_color("orange"), "#6A6A6A"]
+    for idx, label in enumerate(labels):
+        center = px1 + group_w * idx + group_w / 2
+        for s_idx, name in enumerate(names):
+            value = values_by_name[name][idx]
+            y_raw = scale_y(value, min_value, max_value, py1, py2 - py1)
+            bar_y = py2 - int(y_raw - py1)
+            bx = int(center + (s_idx - (len(names) - 1) / 2) * (bar_w + 6) - bar_w / 2)
+            draw.rectangle([bx, min(zero_y, bar_y), bx + int(bar_w), max(zero_y, bar_y)], fill=palette[s_idx % len(palette)])
+        draw.text((int(center) - 20, py2 + 14), str(label).replace("Year ", "Y"), font=fonts["chart"], fill=hex_color("muted"))
+    for s_idx, name in enumerate(names):
+        lx = x1 + 24 + s_idx * 170
+        draw.rectangle([lx, y2 - 34, lx + 20, y2 - 20], fill=palette[s_idx % len(palette)])
+        draw.text((lx + 28, y2 - 38), name, font=fonts["chart_bold"], fill=hex_color("muted"))
+
+
+def draw_footer(draw: ImageDraw.ImageDraw, page_no: int, fonts: dict[str, ImageFont.FreeTypeFont]) -> None:
+    """슬라이드 푸터."""
+    draw.line([SLIDE_MARGIN, SLIDE_H - 58, SLIDE_W - SLIDE_MARGIN, SLIDE_H - 58], fill=hex_color("line"), width=2)
+    draw.text((SLIDE_MARGIN, SLIDE_H - 42), "Business Profitability Assessment", font=fonts["footer"], fill=hex_color("muted"))
+    draw.text((SLIDE_W - SLIDE_MARGIN - 35, SLIDE_H - 42), str(page_no), font=fonts["footer"], fill=hex_color("muted"))
 
 def format_pdf_cell(value: Any) -> str:
     """PDF 표에 넣을 값을 문자열로 정리한다."""
@@ -457,161 +772,200 @@ def build_pdf_report(
     model_result: dict[str, Any],
     currency: str,
 ) -> bytes:
-    """입력값과 결과 대시보드를 PDF 보고서로 생성한다."""
-    pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
-    pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
-
-    output = BytesIO()
-    doc = SimpleDocTemplate(
-        output,
-        pagesize=landscape(A4),
-        leftMargin=12 * mm,
-        rightMargin=12 * mm,
-        topMargin=12 * mm,
-        bottomMargin=12 * mm,
-    )
-    base_styles = getSampleStyleSheet()
-    styles = {
-        "cover_title": ParagraphStyle("CoverTitle", parent=base_styles["Title"], fontName="HYGothic-Medium", fontSize=25, leading=31, textColor=colors.HexColor("#2D2D2D"), spaceAfter=8),
-        "cover_subtitle": ParagraphStyle("CoverSubtitle", parent=base_styles["BodyText"], fontName="HYSMyeongJo-Medium", fontSize=11, leading=15, textColor=colors.HexColor("#555555")),
-        "title": ParagraphStyle("KoreanTitle", parent=base_styles["Title"], fontName="HYGothic-Medium", fontSize=18, leading=24, textColor=colors.HexColor("#2D2D2D"), spaceAfter=8),
-        "section": ParagraphStyle("KoreanSection", parent=base_styles["Heading2"], fontName="HYGothic-Medium", fontSize=12, leading=16, textColor=colors.HexColor("#2D2D2D"), spaceBefore=8, spaceAfter=5),
-        "body": ParagraphStyle("KoreanBody", parent=base_styles["BodyText"], fontName="HYSMyeongJo-Medium", fontSize=8, leading=11, textColor=colors.HexColor("#404040")),
-    }
-
+    """입력값과 결과 대시보드를 16:9 발표형 PDF 보고서로 생성한다."""
+    fonts = load_slide_fonts()
     initial = assumptions.get("initial_investment", {})
+    pages: list[Image.Image] = []
+    kpis = model_result["kpis"]
+
+    # Page 1: Cover
+    page = Image.new("RGB", (SLIDE_W, SLIDE_H), hex_color("bg"))
+    draw = ImageDraw.Draw(page)
+    draw.rectangle([0, 0, SLIDE_W, SLIDE_H], fill=hex_color("bg"))
+    draw.rectangle([0, 0, 470, SLIDE_H], fill=hex_color("dark"))
+    draw.rectangle([0, 0, 470, 260], fill=hex_color("red"))
+    draw.rectangle([470, 0, 690, 260], fill=hex_color("orange"))
+    draw.rectangle([690, 0, 820, 260], fill=hex_color("yellow"))
+    draw.text((92, 410), "Business\nProfitability\nReport", font=fonts["title"], fill="#FFFFFF", spacing=12)
+    draw.text((590, 345), "사업 수익성 분석 보고서", font=ImageFont.truetype(str(FONT_DIR / "Pretendard-Bold.otf"), 74), fill=hex_color("ink"))
+    draw_wrapped_text(draw, "현재 입력값과 결과 대시보드를 바탕으로 작성된 투자검토용 요약 보고서입니다.", (596, 458), 980, fonts["subtitle"], hex_color("muted"), line_gap=10, max_lines=2)
+    meta = [
+        ["사업명", str(assumptions.get("business_name", ""))],
+        ["업종", str(assumptions.get("industry", ""))],
+        ["분석기간", f"{assumptions.get('analysis_years', '')}년"],
+        ["기준 통화", str(assumptions.get("currency", "KRW"))],
+    ]
+    draw_small_table(draw, (596, 600, 1590, 820), "Report Scope", ["구분", "내용"], meta, [0.25, 0.75], fonts)
+    draw.text((596, 900), "Prepared for decision review", font=fonts["body"], fill=hex_color("muted"))
+    draw_footer(draw, 1, fonts)
+    pages.append(page)
+
+    # Page 2: Executive Summary & Key KPI
+    page, draw = make_slide("Executive Summary & Key KPI", "핵심 숫자와 의사결정 포인트", 2, fonts)
+    kpi_items = [
+        ("총매출", format_million(kpis["총매출"]), "분석기간 누적 매출", "red"),
+        ("영업이익", format_million(kpis["영업이익"]), "총비용 차감 후 영업성과", "orange"),
+        ("순이익", format_million(kpis["순이익"]), "세금 반영 후 최종 이익", "red"),
+        ("영업이익률", pct_display(kpis["영업이익률"]), "누적 매출 대비", "orange"),
+        ("투자회수기간", str(kpis["투자회수기간"]), "누적현금흐름 기준", "red"),
+        ("ROI", pct_display(kpis["ROI"]), "초기투자비 대비 5년 누적 순이익", "orange"),
+    ]
+    for idx, item in enumerate(kpi_items):
+        x = SLIDE_MARGIN + (idx % 3) * 580
+        y = 178 + (idx // 3) * 178
+        label, value, note, accent = item
+        draw_kpi_card(draw, (x, y, x + 532, y + 138), label, value, note, fonts, accent)
+    decision_y = 590
+    rounded_card(draw, (SLIDE_MARGIN, decision_y, SLIDE_W - SLIDE_MARGIN, 885))
+    draw.text((SLIDE_MARGIN + 28, decision_y + 26), "Decision Readout", font=fonts["section"], fill=hex_color("ink"))
+    margin_ratio = float(kpis["영업이익률"])
+    roi = float(kpis["ROI"])
+    payback = str(kpis["투자회수기간"])
+    bullets = [
+        f"영업이익률은 {pct_display(margin_ratio)}로 추정됩니다.",
+        f"ROI는 {pct_display(roi)}이며, 초기투자비 대비 누적 순이익 기준입니다.",
+        f"투자회수기간은 {payback}입니다.",
+        f"손익분기매출(1년차)은 {format_million(kpis['손익분기매출(1년차)'])}입니다.",
+    ]
+    for idx, bullet in enumerate(bullets):
+        y = decision_y + 82 + idx * 44
+        draw.ellipse([SLIDE_MARGIN + 32, y + 6, SLIDE_MARGIN + 44, y + 18], fill=hex_color("red"))
+        draw_wrapped_text(draw, bullet, (SLIDE_MARGIN + 60, y), 1450, fonts["body"], hex_color("ink"), max_lines=1)
+    pages.append(page)
+
+    # Page 3: Input Assumptions Summary 1
+    page, draw = make_slide("Input Assumptions Summary 1", "기본설정, 성장률, 초기투자비", 3, fonts)
     basic_rows = [
-        ["항목", "값"],
         ["사업명", assumptions.get("business_name", "")],
         ["업종", assumptions.get("industry", "")],
-        ["분석기간(년)", assumptions.get("analysis_years", "")],
-        ["기준 통화", assumptions.get("currency", "KRW")],
-        ["단순 세율(%)", assumptions.get("tax_rate_pct", 0)],
+        ["분석기간", f"{assumptions.get('analysis_years', '')}년"],
+        ["기준통화", assumptions.get("currency", "KRW")],
+        ["세율", pct_display(assumptions.get("tax_rate_pct", 0), already_percent=True)],
     ]
     growth_rows = [
-        ["항목", "값"],
-        ["매출 성장률(%)", assumptions.get("revenue_growth_pct", 0)],
-        ["비용 증가율(%)", assumptions.get("cost_growth_pct", 0)],
-        ["인건비 증가율(%)", assumptions.get("labor_growth_pct", 0)],
-        ["임대료 증가율(%)", assumptions.get("rent_growth_pct", 0)],
-        ["기타 비용 증가율(%)", assumptions.get("other_growth_pct", 0)],
+        ["매출 성장률", pct_display(assumptions.get("revenue_growth_pct", 0), already_percent=True)],
+        ["비용 증가율", pct_display(assumptions.get("cost_growth_pct", 0), already_percent=True)],
+        ["인건비 증가율", pct_display(assumptions.get("labor_growth_pct", 0), already_percent=True)],
+        ["임대료 증가율", pct_display(assumptions.get("rent_growth_pct", 0), already_percent=True)],
+        ["기타 비용 증가율", pct_display(assumptions.get("other_growth_pct", 0), already_percent=True)],
     ]
-    investment_rows = [["초기투자비 항목", "금액"]] + [[key, format_money(initial.get(key, 0), currency)] for key in INITIAL_INVESTMENT_KEYS]
+    investment_rows = [[key, format_million(initial.get(key, 0))] for key in INITIAL_INVESTMENT_KEYS]
+    investment_rows.append(["합계", format_million(sum(float(initial.get(key, 0)) for key in INITIAL_INVESTMENT_KEYS))])
+    draw_small_table(draw, (92, 170, 650, 515), "기본 설정", ["항목", "값"], basic_rows, [0.42, 0.58], fonts)
+    draw_small_table(draw, (700, 170, 1260, 515), "성장률", ["항목", "값"], growth_rows, [0.58, 0.42], fonts)
+    draw_small_table(draw, (1310, 170, 1828, 770), "초기투자비 (단위: 백만원)", ["항목", "금액"], investment_rows, [0.58, 0.42], fonts, money_cols={1}, highlight_rows={len(investment_rows) - 1})
+    draw_wrapped_text(draw, "초기투자비는 보증금, 인테리어, 설비/장비, 초기재고 및 인허가/컨설팅 비용을 합산한 투자 전제입니다.", (92, 610), 1110, fonts["body"], hex_color("muted"), max_lines=3)
+    pages.append(page)
 
-    kpi_rows = [["KPI", "값"]]
-    for key, value in model_result["kpis"].items():
-        if key in ["영업이익률", "순이익률", "ROI"]:
-            display = format_pct(value)
-        elif isinstance(value, (int, float)):
-            display = format_money(value, currency)
-        else:
-            display = str(value)
-        kpi_rows.append([key, display])
+    # Page 4: Input Assumptions Summary 2
+    page, draw = make_slide("Input Assumptions Summary 2", "핵심 입력 요약: 매출, 비용, 인력", 4, fonts)
+    rev_rows = []
+    for _, row in revenue_df.iterrows():
+        rev_rows.append([row["매출항목명"], row["계산방식"], format_million(row["단가"], ""), format_number_1(row["수량/이용자수"]), row["발생주기"], pct_display(row["연간성장률(%)"], already_percent=True)])
+    cost_rows = []
+    for _, row in cost_df.iterrows():
+        cost_rows.append([row["비용항목명"], row["비용유형"], format_million(row["월비용"], ""), format_million(row["연비용"], ""), pct_display(row["매출대비비율(%)"], already_percent=True), pct_display(row["연간증가율(%)"], already_percent=True)])
+    staff_rows = []
+    for _, row in staffing_df.iterrows():
+        staff_rows.append([row["직무명"], format_number_1(row["인원수"]), format_million(row["1인당월급"], ""), pct_display(row["4대보험/복리후생비율(%)"], already_percent=True), pct_display(row["연봉상승률(%)"], already_percent=True), pct_display(row["연간인원증가율(%)"], already_percent=True)])
+    draw_small_table(draw, (92, 158, 1828, 390), "매출 입력 핵심 요약 (금액 단위: 백만원)", ["항목명", "계산방식", "단가", "수량/이용자", "주기", "성장률"], rev_rows, [0.24, 0.24, 0.12, 0.13, 0.09, 0.10], fonts, money_cols={2}, max_rows=4)
+    draw_small_table(draw, (92, 420, 1828, 678), "비용 입력 핵심 요약 (금액 단위: 백만원)", ["항목명", "유형", "월비용", "연비용", "매출대비", "증가율"], cost_rows, [0.28, 0.16, 0.14, 0.14, 0.12, 0.12], fonts, money_cols={2, 3}, max_rows=6)
+    draw_small_table(draw, (92, 708, 1828, 930), "인력 입력 핵심 요약 (금액 단위: 백만원)", ["직무명", "인원", "월급", "복리후생", "연봉상승", "인원증가"], staff_rows, [0.28, 0.12, 0.16, 0.15, 0.15, 0.14], fonts, money_cols={2}, max_rows=4)
+    pages.append(page)
 
-    cover_art = Drawing(760, 80)
-    cover_art.add(Rect(0, 0, 760, 80, fillColor=colors.HexColor("#2D2D2D"), strokeColor=None))
-    cover_art.add(Rect(0, 0, 175, 80, fillColor=colors.HexColor("#D04A02"), strokeColor=None))
-    cover_art.add(Rect(175, 0, 110, 80, fillColor=colors.HexColor("#EB8C00"), strokeColor=None))
-    cover_art.add(Rect(285, 0, 70, 80, fillColor=colors.HexColor("#FFB600"), strokeColor=None))
-    cover_art.add(String(18, 48, "Business Profitability", fontName="HYGothic-Medium", fontSize=13, fillColor=colors.white))
-    cover_art.add(String(18, 28, "Assessment Report", fontName="HYGothic-Medium", fontSize=13, fillColor=colors.white))
-
-    story: list[Any] = [
-        cover_art,
-        Spacer(1, 18 * mm),
-        Paragraph("사업 수익성 분석 보고서", styles["cover_title"]),
-        Paragraph("현재 입력값과 결과 대시보드 기준으로 생성된 의사결정용 요약 보고서입니다.", styles["cover_subtitle"]),
-        Spacer(1, 10 * mm),
-        compact_pdf_table(
-            [
-                ["사업명", "업종", "분석기간", "기준 통화"],
-                [
-                    str(assumptions.get("business_name", "")),
-                    str(assumptions.get("industry", "")),
-                    f"{assumptions.get('analysis_years', '')}년",
-                    str(assumptions.get("currency", "KRW")),
-                ],
-            ]
-        ),
-        Spacer(1, 12 * mm),
-        Paragraph("보고서 구성: 기본 설정, 성장률, 초기투자비, 입력 가정, KPI, 대시보드 차트, 손익계산서, 현금흐름, 손익분기점", styles["body"]),
-        PageBreak(),
-        Paragraph("Executive Summary", styles["title"]),
-        Paragraph("핵심 수익성 지표와 투자 회수 가능성을 먼저 확인하고, 이어지는 차트와 상세 표에서 입력 가정과 계산 결과를 검토합니다.", styles["body"]),
-        Spacer(1, 5 * mm),
+    # Page 5: Dashboard View
+    page, draw = make_slide("Dashboard View", "핵심 숫자 → 추세 → 의사결정 포인트", 5, fonts)
+    dashboard_items = [
+        ("총매출", format_million(kpis["총매출"]), "누적", "red"),
+        ("영업이익", format_million(kpis["영업이익"]), "누적", "orange"),
+        ("순이익", format_million(kpis["순이익"]), "누적", "red"),
+        ("영업이익률", pct_display(kpis["영업이익률"]), "수익성", "orange"),
+        ("투자회수", str(kpis["투자회수기간"]), "Payback", "red"),
+        ("손익분기매출", format_million(kpis["손익분기매출(1년차)"]), "Year 1", "orange"),
     ]
-    story.append(
-        compact_pdf_table(
+    for idx, item in enumerate(dashboard_items):
+        x = 92 + idx * 292
+        label, value, note, accent = item
+        draw_kpi_card(draw, (x, 148, x + 264, 278), label, value, note, fonts, accent)
+    draw_line_chart_slide(draw, (92, 320, 920, 610), "연도별 매출 추이", {"총매출": model_result["series"]["revenue"]}, fonts)
+    draw_line_chart_slide(draw, (1000, 320, 1828, 610), "연도별 비용 추이", {"총비용": model_result["series"]["total_cost"]}, fonts)
+    draw_bar_chart_slide(draw, (92, 650, 920, 940), "영업이익 및 순이익 추이", {"영업이익": model_result["series"]["operating_income"], "순이익": model_result["series"]["net_income"]}, fonts)
+    draw_line_chart_slide(draw, (1000, 650, 1828, 940), "누적 현금흐름", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]}, fonts)
+    pages.append(page)
+
+    # Page 6: Profit & Loss Statement
+    page, draw = make_slide("Profit & Loss Statement", "손익계산서: 연도별 추정치, 단위: 백만원", 6, fonts)
+    pnl = model_result["pnl"].copy()
+    years = [col for col in pnl.columns if str(col).startswith("Year")]
+    pnl_rows = []
+    highlight_names = {"총매출", "매출총이익", "EBITDA", "영업이익", "순이익", "누적 순이익", "영업이익률", "순이익률"}
+    highlight_rows = set()
+    for idx, row in pnl.iterrows():
+        name = row["항목"]
+        values = []
+        for year in years:
+            values.append(pct_display(row[year]) if "률" in str(name) else format_million(row[year], ""))
+        if name in highlight_names:
+            highlight_rows.add(len(pnl_rows))
+        pnl_rows.append([name, *values])
+    draw_small_table(draw, (92, 160, 1828, 880), "손익계산서 (단위: 백만원, 비율: %)", ["항목", *years], pnl_rows, [0.24, 0.152, 0.152, 0.152, 0.152, 0.152], fonts, money_cols={1, 2, 3, 4, 5}, highlight_rows=highlight_rows)
+    draw_wrapped_text(draw, "강조 행은 수익성 판단에 직접 영향을 주는 핵심 계정입니다. 금액은 원 단위가 아닌 백만원 단위로 환산했습니다.", (92, 905), 1500, fonts["body"], hex_color("muted"), max_lines=2)
+    pages.append(page)
+
+    # Page 7: Cash Flow & Payback Analysis
+    page, draw = make_slide("Cash Flow & Payback Analysis", "현금흐름표: Year 0 포함, 단위: 백만원", 7, fonts)
+    cash_df = model_result["cash_flow"].copy()
+    cash_rows = []
+    positive_cross = None
+    for idx, row in cash_df.iterrows():
+        flow = float(row["현금흐름"])
+        cumulative = float(row["누적현금흐름"])
+        if positive_cross is None and row["연도"] != "Year 0" and cumulative >= 0:
+            positive_cross = idx
+        cash_rows.append([row["연도"], format_million(flow, ""), format_million(cumulative, "")])
+    highlight = {0}
+    if positive_cross is not None:
+        highlight.add(positive_cross)
+    draw_small_table(draw, (92, 170, 840, 720), "현금흐름표 (단위: 백만원)", ["연도", "현금흐름", "누적현금흐름"], cash_rows, [0.28, 0.36, 0.36], fonts, money_cols={1, 2}, highlight_rows=highlight)
+    draw_line_chart_slide(draw, (920, 170, 1828, 720), "누적현금흐름 추이", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]}, fonts)
+    rounded_card(draw, (92, 760, 1828, 910))
+    draw.text((120, 790), "Payback Insight", font=fonts["section"], fill=hex_color("ink"))
+    payback_text = f"투자회수기간은 {kpis['투자회수기간']}입니다. Year 0의 초기투자비를 반영한 누적현금흐름이 양수로 전환되는 시점을 기준으로 판단합니다."
+    draw_wrapped_text(draw, payback_text, (120, 838), 1580, fonts["body"], hex_color("ink"), max_lines=2)
+    pages.append(page)
+
+    # Page 8: Break-even Analysis
+    page, draw = make_slide("Break-even Analysis", "손익분기점 및 안전마진 분석, 금액 단위: 백만원", 8, fonts)
+    break_rows = []
+    revenue_series = model_result["series"]["revenue"]
+    for _, row in model_result["break_even"].iterrows():
+        year = row["연도"]
+        expected = float(revenue_series.get(year, 0))
+        be_sales = float(row["손익분기매출"])
+        excess = expected - be_sales
+        safety = excess / expected if expected else 0
+        break_rows.append(
             [
-                ["총매출", "영업이익", "순이익", "ROI", "투자회수기간"],
-                [
-                    format_money(model_result["kpis"]["총매출"], currency),
-                    format_money(model_result["kpis"]["영업이익"], currency),
-                    format_money(model_result["kpis"]["순이익"], currency),
-                    format_pct(model_result["kpis"]["ROI"]),
-                    str(model_result["kpis"]["투자회수기간"]),
-                ],
+                year,
+                format_million(expected, ""),
+                format_million(be_sales, ""),
+                format_million(excess, ""),
+                pct_display(safety),
+                pct_display(row["공헌이익률"]),
+                format_number_1(row["손익분기판매량"]),
             ]
         )
-    )
-    story.append(Spacer(1, 6 * mm))
-    report_section(story, "1. 기본 설정", basic_rows, styles)
-    report_section(story, "2. 성장률", growth_rows, styles)
-    report_section(story, "3. 초기투자비", investment_rows, styles)
-    story.append(PageBreak())
+    draw_small_table(draw, (92, 170, 1828, 640), "손익분기점 비교표 (금액 단위: 백만원)", ["연도", "예상매출", "손익분기매출", "초과매출", "안전마진율", "공헌이익률", "손익분기판매량"], break_rows, [0.10, 0.15, 0.17, 0.15, 0.14, 0.14, 0.15], fonts, money_cols={1, 2, 3})
+    break_even_series = pd.Series({row["연도"]: row["손익분기매출"] for _, row in model_result["break_even"].iterrows()}, name="손익분기 매출")
+    draw_line_chart_slide(draw, (92, 690, 920, 940), "예상매출 vs 손익분기매출", {"예상 매출": model_result["series"]["revenue"], "손익분기 매출": break_even_series}, fonts)
+    rounded_card(draw, (1000, 690, 1828, 940))
+    draw.text((1028, 720), "Decision Point", font=fonts["section"], fill=hex_color("ink"))
+    draw_wrapped_text(draw, "예상매출이 손익분기매출을 안정적으로 초과하면 고정비 부담을 흡수할 여지가 커집니다. 안전마진율이 낮은 연도는 가격, 판매량, 원가율 조정이 필요한 구간입니다.", (1028, 772), 730, fonts["body"], hex_color("ink"), max_lines=4)
+    pages.append(page)
 
-    story.append(Paragraph("Dashboard View", styles["title"]))
-    story.append(Paragraph("앱 대시보드의 핵심 그림을 PDF 보고서에 함께 반영했습니다. 금액 축은 백만원 단위입니다.", styles["body"]))
-    story.append(Spacer(1, 5 * mm))
-    cost_detail = model_result["costs"]["detail"]
-    first_year = "Year 1"
-    cost_labels: list[str] = []
-    cost_values: list[float] = []
-    if first_year in cost_detail.columns:
-        cost_slice = cost_detail[["비용항목명", first_year]].copy()
-        cost_slice = cost_slice[cost_slice[first_year] > 0].sort_values(first_year, ascending=False).head(6)
-        cost_labels = [str(value) for value in cost_slice["비용항목명"].tolist()]
-        cost_values = [float(value) for value in cost_slice[first_year].tolist()]
-    break_even_series = pd.Series(
-        {row["연도"]: row["손익분기매출"] for _, row in model_result["break_even"].iterrows()},
-        name="손익분기 매출",
-    )
-    charts = [
-        line_chart_pdf("연도별 매출 추이", {"총매출": model_result["series"]["revenue"]}),
-        line_chart_pdf("연도별 비용 추이", {"총비용": model_result["series"]["total_cost"]}),
-        bar_chart_pdf("영업이익 / 순이익", {"영업이익": model_result["series"]["operating_income"], "순이익": model_result["series"]["net_income"]}),
-        line_chart_pdf("누적 현금흐름", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]}),
-        line_chart_pdf("손익분기점 분석", {"예상 매출": model_result["series"]["revenue"], "손익분기 매출": break_even_series}),
-    ]
-    if cost_labels:
-        charts.append(horizontal_bar_pdf("비용 구성 - Year 1", cost_labels, cost_values))
-    story.append(chart_grid(charts))
-    story.append(PageBreak())
-
-    report_section(story, "4. 매출 입력", dataframe_for_pdf(revenue_df), styles)
-    report_section(story, "5. 비용 입력", dataframe_for_pdf(cost_df), styles)
-    report_section(story, "6. 인력 입력", dataframe_for_pdf(staffing_df), styles)
-    story.append(PageBreak())
-    report_section(story, "7. 핵심 KPI", kpi_rows, styles)
-    report_section(story, "8. 손익계산서", dataframe_for_pdf(formatted_financial_table(model_result["pnl"], currency)), styles)
-
-    cash_display = model_result["cash_flow"].copy()
-    for col in ["현금흐름", "누적현금흐름"]:
-        cash_display[col] = cash_display[col].apply(lambda x: format_money(x, currency))
-    report_section(story, "9. 현금흐름", dataframe_for_pdf(cash_display), styles)
-    report_section(story, "10. 손익분기점", dataframe_for_pdf(formatted_break_even_table(model_result["break_even"], currency)), styles)
-
-    def draw_footer(canvas, doc_obj):
-        canvas.saveState()
-        canvas.setFont("HYGothic-Medium", 7)
-        canvas.setFillColor(colors.HexColor("#777777"))
-        canvas.drawString(12 * mm, 7 * mm, "Business Profitability Assessment")
-        canvas.drawRightString(285 * mm, 7 * mm, f"Page {doc_obj.page}")
-        canvas.restoreState()
-
-    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    output = BytesIO()
+    pages[0].save(output, format="PDF", save_all=True, append_images=pages[1:], resolution=150.0)
     return output.getvalue()
-
 
 def as_float(value: Any, default: float = 0.0) -> float:
     """Streamlit 입력 위젯에 넣을 숫자를 안전하게 만든다."""
