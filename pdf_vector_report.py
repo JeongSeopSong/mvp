@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -16,9 +17,8 @@ BASE_DIR = Path(__file__).resolve().parent
 FONT_DIR = BASE_DIR / "assets" / "fonts"
 
 
-PAGE_W = 960
-PAGE_H = 540
-MARGIN = 44
+PAGE_W, PAGE_H = landscape(A4)
+MARGIN = 42
 
 
 PALETTE = {
@@ -57,7 +57,7 @@ def money_m(value: Any, suffix: str = "백만원") -> str:
         number = float(value) / 1_000_000
     except (TypeError, ValueError):
         number = 0.0
-    return f"{number:,.1f}{suffix}"
+    return f"{number:,.1f} {suffix}" if suffix else f"{number:,.1f}"
 
 
 def number_1(value: Any) -> str:
@@ -67,9 +67,16 @@ def number_1(value: Any) -> str:
         return str(value)
 
 
-def pct(value: Any) -> str:
+def pct_point(value: Any) -> str:
     try:
         return f"{float(value):,.1f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def pct_ratio(value: Any) -> str:
+    try:
+        return f"{float(value) * 100:,.1f}%"
     except (TypeError, ValueError):
         return str(value)
 
@@ -176,7 +183,8 @@ class ReportPainter:
         self.pdf.roundRect(x, y, 5, h, 3, fill=1, stroke=0)
         self.text(label, x + 16, y + h - 21, 9.4, "PretendardSemi", "muted")
         self.text(value, x + 16, y + h - 48, 18.6, "PretendardBold", "ink")
-        self.wrapped(note, x + 16, y + 17, w - 28, 8.4, "Pretendard", "muted", max_lines=1)
+        if h >= 66:
+            self.wrapped(note, x + 16, y + 8, w - 28, 8.2, "Pretendard", "muted", max_lines=1)
 
     def table(
         self,
@@ -343,24 +351,24 @@ def build_pdf_report(
     p.fill(PALETTE["bg"])
     pdf.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
     p.fill(PALETTE["dark"])
-    pdf.rect(0, 0, 330, PAGE_H, fill=1, stroke=0)
+    pdf.rect(0, 0, 285, PAGE_H, fill=1, stroke=0)
     p.fill(PALETTE["red"])
-    pdf.rect(0, PAGE_H - 128, 330, 128, fill=1, stroke=0)
+    pdf.rect(0, PAGE_H - 132, 285, 132, fill=1, stroke=0)
     p.fill(PALETTE["orange"])
-    pdf.rect(330, PAGE_H - 128, 72, 128, fill=1, stroke=0)
-    p.text("Business", 54, 322, 30, "PretendardBold", "paper")
-    p.text("Profitability", 54, 284, 30, "PretendardBold", "paper")
-    p.text("Report", 54, 246, 30, "PretendardBold", "paper")
-    p.text("사업 수익성 분석 보고서", 400, 342, 33, "PretendardBold", "ink")
-    p.wrapped("현재 입력값과 결과 대시보드를 바탕으로 작성된 투자검토용 요약 보고서입니다.", 404, 306, 460, 13, "Pretendard", "muted", max_lines=2)
+    pdf.rect(285, PAGE_H - 132, 60, 132, fill=1, stroke=0)
+    p.text("Business", 54, 350, 27, "PretendardBold", "paper")
+    p.text("Profitability", 54, 315, 27, "PretendardBold", "paper")
+    p.text("Report", 54, 280, 27, "PretendardBold", "paper")
+    p.text("사업 수익성 분석 보고서", 360, 372, 29, "PretendardBold", "ink")
+    p.wrapped("현재 입력값과 결과 대시보드를 바탕으로 작성된 투자검토용 요약 보고서입니다.", 364, 336, 420, 12.2, "Pretendard", "muted", max_lines=2)
     meta = [
         ["사업명", assumptions.get("business_name", "")],
         ["업종", assumptions.get("industry", "")],
         ["분석기간", f"{assumptions.get('analysis_years', '')}년"],
         ["기준 통화", assumptions.get("currency", "KRW")],
     ]
-    p.table(404, 252, 430, "Report Scope", ["구분", "내용"], meta, [0.28, 0.72], row_h=28, size=10.2)
-    p.text("Prepared for decision review", 404, 76, 10.5, "Pretendard", "muted")
+    p.table(364, 282, 392, "Report Scope", ["구분", "내용"], meta, [0.28, 0.72], row_h=28, size=10.2)
+    p.text("Prepared for decision review", 364, 92, 10.5, "Pretendard", "muted")
     p.footer(1)
     pdf.showPage()
 
@@ -370,24 +378,24 @@ def build_pdf_report(
         ("총매출", money_m(kpis["총매출"]), "분석기간 누적 매출", "red"),
         ("영업이익", money_m(kpis["영업이익"]), "총비용 차감 후 영업성과", "orange"),
         ("순이익", money_m(kpis["순이익"]), "세금 반영 후 최종 이익", "red"),
-        ("영업이익률", pct(kpis["영업이익률"]), "누적 매출 대비", "orange"),
+        ("영업이익률", pct_ratio(kpis["영업이익률"]), "누적 매출 대비", "orange"),
         ("투자회수기간", str(kpis["투자회수기간"]), "누적현금흐름 기준", "red"),
-        ("ROI", pct(kpis["ROI"]), "5년 누적 순이익 / 초기투자비", "orange"),
+        ("ROI", pct_ratio(kpis["ROI"]), "5년 누적 순이익 / 초기투자비", "orange"),
     ]
     for idx, item in enumerate(kpi_items):
-        p.kpi_card(MARGIN + (idx % 3) * 294, 342 - (idx // 3) * 88, 270, 70, *item)
-    p.card(MARGIN, 86, PAGE_W - MARGIN * 2, 165)
-    p.text("Decision Readout", MARGIN + 18, 220, 14, "PretendardBold", "ink")
+        p.kpi_card(MARGIN + (idx % 3) * 256, 386 - (idx // 3) * 86, 234, 68, *item)
+    p.card(MARGIN, 102, PAGE_W - MARGIN * 2, 155)
+    p.text("Decision Readout", MARGIN + 18, 226, 14, "PretendardBold", "ink")
     bullets = [
-        f"영업이익률은 {pct(kpis['영업이익률'])}로 추정됩니다.",
-        f"ROI는 {pct(kpis['ROI'])}이며, 초기투자비 대비 5년 누적 순이익 기준입니다.",
+        f"영업이익률은 {pct_ratio(kpis['영업이익률'])}로 추정됩니다. 누적 영업이익 / 누적 매출 기준입니다.",
+        f"ROI는 {pct_ratio(kpis['ROI'])}이며, 초기투자비 대비 5년 누적 순이익 기준입니다.",
         f"투자회수기간은 {kpis['투자회수기간']}입니다.",
         f"1년차 손익분기매출은 {money_m(kpis['손익분기매출(1년차)'])}입니다.",
     ]
     for idx, bullet in enumerate(bullets):
         p.fill(PALETTE["red"])
-        pdf.circle(MARGIN + 23, 188 - idx * 28, 2.4, fill=1, stroke=0)
-        p.wrapped(bullet, MARGIN + 34, 184 - idx * 28, PAGE_W - MARGIN * 2 - 64, 11.2, "Pretendard", "ink", max_lines=1)
+        pdf.circle(MARGIN + 23, 196 - idx * 26, 2.4, fill=1, stroke=0)
+        p.wrapped(bullet, MARGIN + 34, 192 - idx * 26, PAGE_W - MARGIN * 2 - 64, 10.8, "Pretendard", "ink", max_lines=1)
     pdf.showPage()
 
     # Page 3: Input Summary 1
@@ -397,61 +405,70 @@ def build_pdf_report(
         ["업종", assumptions.get("industry", "")],
         ["분석기간", f"{assumptions.get('analysis_years', '')}년"],
         ["기준통화", assumptions.get("currency", "KRW")],
-        ["세율", pct(assumptions.get("tax_rate_pct", 0))],
+        ["세율", pct_point(assumptions.get("tax_rate_pct", 0))],
     ]
     growth_rows = [
-        ["매출 성장률", pct(assumptions.get("revenue_growth_pct", 0))],
-        ["비용 증가율", pct(assumptions.get("cost_growth_pct", 0))],
-        ["인건비 증가율", pct(assumptions.get("labor_growth_pct", 0))],
-        ["임대료 증가율", pct(assumptions.get("rent_growth_pct", 0))],
-        ["기타 비용 증가율", pct(assumptions.get("other_growth_pct", 0))],
+        ["매출 성장률", pct_point(assumptions.get("revenue_growth_pct", 0))],
+        ["비용 증가율", pct_point(assumptions.get("cost_growth_pct", 0))],
+        ["인건비 증가율", pct_point(assumptions.get("labor_growth_pct", 0))],
+        ["임대료 증가율", pct_point(assumptions.get("rent_growth_pct", 0))],
+        ["기타 비용 증가율", pct_point(assumptions.get("other_growth_pct", 0))],
     ]
     invest_rows = [[key, money_m(value)] for key, value in initial.items()]
     invest_rows.append(["합계", money_m(sum(float(v) for v in initial.values()))])
-    p.table(MARGIN, 438, 278, "기본 설정", ["항목", "값"], basic_rows, [0.42, 0.58], row_h=28, size=10)
-    p.table(346, 438, 278, "성장률", ["항목", "값"], growth_rows, [0.58, 0.42], row_h=28, size=10, right_cols={1})
-    p.table(648, 438, 268, "초기투자비", ["항목", "금액"], invest_rows, [0.58, 0.42], row_h=25, size=9.5, right_cols={1}, highlight_rows={len(invest_rows) - 1})
+    col_w = (PAGE_W - MARGIN * 2 - 32) / 3
+    p.table(MARGIN, 478, col_w, "기본 설정", ["항목", "값"], basic_rows, [0.42, 0.58], row_h=30, size=9.8)
+    p.table(MARGIN + col_w + 16, 478, col_w, "성장률", ["항목", "값"], growth_rows, [0.58, 0.42], row_h=30, size=9.8, right_cols={1})
+    p.table(MARGIN + (col_w + 16) * 2, 478, col_w, "초기투자비", ["항목", "금액"], invest_rows, [0.58, 0.42], row_h=26, size=9.3, right_cols={1}, highlight_rows={len(invest_rows) - 1})
     pdf.showPage()
 
-    # Page 4: Input Summary 2
-    p.page_header("Input Assumptions Summary 2", "매출, 비용, 인력 입력 핵심 요약", 4)
+    # Page 4: Revenue & Cost Inputs
+    p.page_header("Input Assumptions Summary 2", "매출 및 비용 입력 핵심 요약", 4)
     rev_rows = [
-        [row["매출항목명"], row["계산방식"], money_m(row["단가"]), number_1(row["수량/이용자수"]), row["발생주기"], pct(row["연간성장률(%)"])]
+        [row["매출항목명"], row["계산방식"], money_m(row["단가"]), number_1(row["수량/이용자수"]), row["발생주기"], pct_point(row["연간성장률(%)"])]
         for _, row in revenue_df.iterrows()
     ]
     cost_rows = [
-        [row["비용항목명"], row["비용유형"], money_m(row["월비용"]), money_m(row["연비용"]), pct(row["매출대비비율(%)"]), pct(row["연간증가율(%)"])]
+        [row["비용항목명"], row["비용유형"], money_m(row["월비용"]), money_m(row["연비용"]), pct_point(row["매출대비비율(%)"]), pct_point(row["연간증가율(%)"])]
         for _, row in cost_df.iterrows()
     ]
-    staff_rows = [
-        [row["직무명"], number_1(row["인원수"]), money_m(row["1인당월급"]), pct(row["4대보험/복리후생비율(%)"]), pct(row["연봉상승률(%)"]), pct(row["연간인원증가율(%)"])]
-        for _, row in staffing_df.iterrows()
-    ]
-    p.table(MARGIN, 440, PAGE_W - MARGIN * 2, "매출 입력 핵심 요약", ["항목명", "계산방식", "단가", "수량/이용자", "주기", "성장률"], rev_rows, [0.25, 0.22, 0.15, 0.14, 0.10, 0.14], row_h=28, size=9.4, right_cols={2, 3, 5}, max_rows=4)
-    p.table(MARGIN, 278, PAGE_W - MARGIN * 2, "비용 입력 핵심 요약", ["항목명", "유형", "월비용", "연비용", "매출대비", "증가율"], cost_rows, [0.28, 0.15, 0.15, 0.15, 0.13, 0.14], row_h=24, size=9.2, right_cols={2, 3, 4, 5}, max_rows=5)
-    p.table(MARGIN, 134, PAGE_W - MARGIN * 2, "인력 입력 핵심 요약", ["직무명", "인원", "월급", "복리후생", "연봉상승", "인원증가"], staff_rows, [0.28, 0.12, 0.17, 0.15, 0.14, 0.14], row_h=25, size=9.2, right_cols={1, 2, 3, 4, 5}, max_rows=3)
+    p.table(MARGIN, 478, PAGE_W - MARGIN * 2, "매출 입력 핵심 요약", ["항목명", "계산방식", "단가", "수량/이용자", "주기", "성장률"], rev_rows, [0.25, 0.22, 0.15, 0.14, 0.10, 0.14], row_h=30, size=9.1, right_cols={2, 3, 5}, max_rows=4)
+    p.table(MARGIN, 270, PAGE_W - MARGIN * 2, "비용 입력 핵심 요약", ["항목명", "유형", "월비용", "연비용", "매출대비", "증가율"], cost_rows, [0.28, 0.15, 0.15, 0.15, 0.13, 0.14], row_h=27, size=9.0, right_cols={2, 3, 4, 5}, max_rows=5)
     pdf.showPage()
 
-    # Page 5: Dashboard
-    p.page_header("Dashboard View", "핵심 숫자, 추세, 의사결정 포인트", 5)
+    # Page 5: Staffing Inputs
+    p.page_header("Input Assumptions Summary 3", "인력 입력 핵심 요약", 5)
+    staff_rows = [
+        [row["직무명"], number_1(row["인원수"]), money_m(row["1인당월급"]), pct_point(row["4대보험/복리후생비율(%)"]), pct_point(row["연봉상승률(%)"]), pct_point(row["연간인원증가율(%)"])]
+        for _, row in staffing_df.iterrows()
+    ]
+    p.table(MARGIN, 478, PAGE_W - MARGIN * 2, "인력 입력 핵심 요약", ["직무명", "인원", "1인당 월급", "복리후생", "연봉상승", "인원증가"], staff_rows, [0.28, 0.12, 0.18, 0.15, 0.14, 0.13], row_h=32, size=9.4, right_cols={1, 2, 3, 4, 5}, max_rows=8)
+    p.card(MARGIN, 92, PAGE_W - MARGIN * 2, 92)
+    p.text("Note", MARGIN + 18, 152, 12, "PretendardBold", "ink")
+    p.wrapped("인력계획을 비용에 자동 반영하는 경우 인건비는 비용 모델에 포함됩니다. 본 표는 입력 가정 확인용이며, 금액은 모두 백만원 단위로 표시했습니다.", MARGIN + 18, 128, PAGE_W - MARGIN * 2 - 36, 10.4, "Pretendard", "ink", max_lines=3)
+    pdf.showPage()
+
+    # Page 6: Dashboard
+    p.page_header("Dashboard View", "핵심 숫자, 주요 추세, 의사결정 포인트", 6)
     dashboard_cards = [
         ("총매출", money_m(kpis["총매출"]), "누적", "red"),
         ("영업이익", money_m(kpis["영업이익"]), "누적", "orange"),
         ("순이익", money_m(kpis["순이익"]), "누적", "red"),
-        ("영업이익률", pct(kpis["영업이익률"]), "수익성", "orange"),
+        ("영업이익률", pct_ratio(kpis["영업이익률"]), "수익성", "orange"),
         ("투자회수", str(kpis["투자회수기간"]), "Payback", "red"),
         ("손익분기매출", money_m(kpis["손익분기매출(1년차)"]), "Year 1", "orange"),
     ]
     for idx, item in enumerate(dashboard_cards):
-        p.kpi_card(MARGIN + idx * 145, 398, 128, 58, *item)
-    p.line_chart(MARGIN, 236, 412, 135, "연도별 매출 추이", {"총매출": model_result["series"]["revenue"]})
-    p.line_chart(504, 236, 412, 135, "연도별 비용 추이", {"총비용": model_result["series"]["total_cost"]})
-    p.bar_chart(MARGIN, 76, 412, 135, "영업이익 및 순이익 추이", {"영업이익": model_result["series"]["operating_income"], "순이익": model_result["series"]["net_income"]})
-    p.line_chart(504, 76, 412, 135, "누적 현금흐름", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]})
+        p.kpi_card(MARGIN + (idx % 3) * 256, 426 - (idx // 3) * 72, 234, 56, *item)
+    p.line_chart(MARGIN, 150, 360, 170, "연도별 매출 추이", {"총매출": model_result["series"]["revenue"]})
+    p.bar_chart(438, 150, 360, 170, "영업이익 및 순이익 추이", {"영업이익": model_result["series"]["operating_income"], "순이익": model_result["series"]["net_income"]})
+    p.card(MARGIN, 66, PAGE_W - MARGIN * 2, 58)
+    p.text("Decision Point", MARGIN + 18, 100, 12, "PretendardBold", "ink")
+    p.wrapped(f"누적 영업이익률 {pct_ratio(kpis['영업이익률'])}, ROI {pct_ratio(kpis['ROI'])}, 투자회수기간 {kpis['투자회수기간']} 기준으로 사업성을 판단합니다.", MARGIN + 130, 100, PAGE_W - MARGIN * 2 - 150, 10.2, "Pretendard", "ink", max_lines=2)
     pdf.showPage()
 
-    # Page 6: P&L
-    p.page_header("Profit & Loss Statement", "손익계산서: 연도별 추정치, 단위: 백만원", 6)
+    # Page 7: P&L
+    p.page_header("Profit & Loss Statement", "손익계산서: 연도별 추정치, 단위: 백만원", 7)
     pnl = model_result["pnl"].copy()
     years = [col for col in pnl.columns if str(col).startswith("Year")]
     key_rows = {"총매출", "매출총이익", "EBITDA", "영업이익", "순이익", "누적 순이익", "영업이익률", "순이익률"}
@@ -459,30 +476,30 @@ def build_pdf_report(
     highlight_rows: set[int] = set()
     for _, row in pnl.iterrows():
         item = row["항목"]
-        values = [pct(row[year]) if "률" in item else money_m(row[year], "") for year in years]
+        values = [pct_ratio(row[year]) if "률" in item else money_m(row[year], "") for year in years]
         if item in key_rows:
             highlight_rows.add(len(pnl_rows))
         pnl_rows.append([item, *values])
-    p.table(MARGIN, 438, PAGE_W - MARGIN * 2, "손익계산서 (금액 단위: 백만원, 비율: %)", ["항목", *years], pnl_rows, [0.25, 0.15, 0.15, 0.15, 0.15, 0.15], row_h=22, size=9.2, right_cols={1, 2, 3, 4, 5}, highlight_rows=highlight_rows)
+    p.table(MARGIN, 478, PAGE_W - MARGIN * 2, "손익계산서 (금액 단위: 백만원, 비율: %)", ["항목", *years], pnl_rows, [0.25, 0.15, 0.15, 0.15, 0.15, 0.15], row_h=22, size=8.9, right_cols={1, 2, 3, 4, 5}, highlight_rows=highlight_rows)
     pdf.showPage()
 
-    # Page 7: Cash Flow
-    p.page_header("Cash Flow & Payback Analysis", "Year 0부터 누적현금흐름 전환 시점까지", 7)
+    # Page 8: Cash Flow
+    p.page_header("Cash Flow & Payback Analysis", "Year 0부터 누적현금흐름 전환 시점까지", 8)
     cash_rows: list[list[str]] = []
     highlight: set[int] = set()
     for idx, row in model_result["cash_flow"].iterrows():
         cash_rows.append([row["연도"], money_m(row["현금흐름"]), money_m(row["누적현금흐름"])])
         if str(row["연도"]) == "Year 0" or (float(row["누적현금흐름"]) >= 0 and idx > 0):
             highlight.add(len(cash_rows) - 1)
-    p.table(MARGIN, 420, 360, "현금흐름표", ["연도", "현금흐름", "누적현금흐름"], cash_rows, [0.28, 0.36, 0.36], row_h=34, size=10, right_cols={1, 2}, highlight_rows=highlight)
-    p.line_chart(444, 190, 472, 230, "누적현금흐름 추이", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]})
-    p.card(444, 86, 472, 78)
-    p.text("Payback Insight", 462, 137, 13, "PretendardBold", "ink")
-    p.wrapped(f"투자회수기간은 {kpis['투자회수기간']}이며, Year 0의 초기투자비는 음수 현금흐름으로 반영됩니다.", 462, 114, 430, 10.8, "Pretendard", "ink", max_lines=2)
+    p.table(MARGIN, 456, 330, "현금흐름표", ["연도", "현금흐름", "누적현금흐름"], cash_rows, [0.28, 0.36, 0.36], row_h=32, size=9.6, right_cols={1, 2}, highlight_rows=highlight)
+    p.line_chart(400, 204, 398, 252, "누적현금흐름 추이", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]})
+    p.card(400, 92, 398, 82)
+    p.text("Payback Insight", 418, 144, 13, "PretendardBold", "ink")
+    p.wrapped(f"투자회수기간은 {kpis['투자회수기간']}이며, Year 0의 초기투자비는 음수 현금흐름으로 반영됩니다.", 418, 120, 356, 10.5, "Pretendard", "ink", max_lines=2)
     pdf.showPage()
 
-    # Page 8: Break-even
-    p.page_header("Break-even Analysis", "손익분기매출과 예상매출 비교", 8)
+    # Page 9: Break-even
+    p.page_header("Break-even Analysis", "손익분기매출과 예상매출 비교", 9)
     break_rows: list[list[str]] = []
     for _, row in model_result["break_even"].iterrows():
         year = row["연도"]
@@ -490,13 +507,13 @@ def build_pdf_report(
         be_sales = float(row["손익분기매출"])
         excess = expected - be_sales
         safety = excess / expected * 100 if expected else 0
-        break_rows.append([year, money_m(expected), money_m(be_sales), money_m(excess), pct(safety), pct(row["공헌이익률"]), number_1(row["손익분기판매량"])])
-    p.table(MARGIN, 426, PAGE_W - MARGIN * 2, "손익분기점 비교표", ["연도", "예상매출", "손익분기매출", "초과매출", "안전마진율", "공헌이익률", "손익분기판매량"], break_rows, [0.10, 0.15, 0.17, 0.15, 0.14, 0.14, 0.15], row_h=26, size=9.3, right_cols={1, 2, 3, 4, 5, 6})
+        break_rows.append([year, money_m(expected), money_m(be_sales), money_m(excess), pct_point(safety), pct_ratio(row["공헌이익률"]), number_1(row["손익분기판매량"])])
+    p.table(MARGIN, 478, PAGE_W - MARGIN * 2, "손익분기점 비교표", ["연도", "예상매출", "손익분기매출", "초과매출", "안전마진율", "공헌이익률", "손익분기판매량"], break_rows, [0.10, 0.15, 0.17, 0.15, 0.14, 0.14, 0.15], row_h=25, size=8.8, right_cols={1, 2, 3, 4, 5, 6})
     break_even_series = pd.Series({row["연도"]: row["손익분기매출"] for _, row in model_result["break_even"].iterrows()}, name="손익분기 매출")
-    p.line_chart(MARGIN, 82, 412, 185, "예상매출 vs 손익분기매출", {"예상 매출": model_result["series"]["revenue"], "손익분기 매출": break_even_series})
-    p.card(504, 82, 412, 185)
-    p.text("Decision Point", 526, 224, 14, "PretendardBold", "ink")
-    p.wrapped("예상매출이 손익분기매출을 안정적으로 초과하면 고정비 부담을 흡수할 여지가 커집니다. 안전마진율이 낮은 연도는 가격, 판매량, 비용 구조 조정이 필요한 구간입니다.", 526, 194, 366, 11, "Pretendard", "ink", max_lines=5)
+    p.line_chart(MARGIN, 86, 360, 188, "예상매출 vs 손익분기매출", {"예상 매출": model_result["series"]["revenue"], "손익분기 매출": break_even_series})
+    p.card(438, 86, 360, 188)
+    p.text("Decision Point", 458, 230, 13, "PretendardBold", "ink")
+    p.wrapped("예상매출이 손익분기매출을 안정적으로 초과하면 고정비 부담을 흡수할 여지가 커집니다. 안전마진율이 낮은 연도는 가격, 판매량, 비용 구조 조정이 필요한 구간입니다.", 458, 202, 318, 10.2, "Pretendard", "ink", max_lines=6)
     pdf.showPage()
 
     pdf.save()
