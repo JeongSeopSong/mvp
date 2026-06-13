@@ -24,6 +24,7 @@ from model.costs import COST_TYPES, default_cost_df, normalize_cost_df
 from model.financials import INITIAL_INVESTMENT_KEYS, build_financial_model
 from model.revenue import OCCURRENCE_OPTIONS, REVENUE_FORMULAS, default_revenue_df, normalize_revenue_df
 from model.staffing import default_staffing_df, normalize_staffing_df
+from pdf_vector_report import build_pdf_report as build_vector_pdf_report
 from utils.charts import (
     bar_chart,
     break_even_chart,
@@ -970,8 +971,6 @@ def build_pdf_report(
     return output.getvalue()
 
 
-from pdf_vector_report import build_pdf_report
-
 def as_float(value: Any, default: float = 0.0) -> float:
     """Streamlit 입력 위젯에 넣을 숫자를 안전하게 만든다."""
     try:
@@ -1355,7 +1354,7 @@ def main() -> None:
     with pdf_tab:
         st.subheader("PDF 보고서 추출")
         st.caption("현재 입력값, 핵심 KPI, 대시보드 차트, 손익표를 전문 보고서 형식의 PDF로 저장합니다.")
-        pdf_bytes = build_pdf_report(
+        pdf_bytes = build_vector_pdf_report(
             assumptions,
             st.session_state["revenue_df"],
             st.session_state["cost_df"],

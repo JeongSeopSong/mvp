@@ -42,14 +42,8 @@ def register_fonts() -> None:
     # Pretendard Std TTF does not include Hangul glyphs. Use the full variable
     # Pretendard TTF so ReportLab can embed Korean text without tofu/broken glyphs.
     variable_font = FONT_DIR / "PretendardVariable.ttf"
-    fonts = {
-        "Pretendard": variable_font,
-        "PretendardSemi": variable_font,
-        "PretendardBold": variable_font,
-    }
-    for font_name, font_path in fonts.items():
-        if font_name not in pdfmetrics.getRegisteredFontNames():
-            pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+    if "PretendardPDF" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("PretendardPDF", str(variable_font)))
 
 
 def money_m(value: Any, suffix: str = "백만원") -> str:
@@ -101,7 +95,7 @@ class ReportPainter:
         x: float,
         y: float,
         size: float = 10,
-        font: str = "Pretendard",
+        font: str = "PretendardPDF",
         color: str = "ink",
         align: str = "left",
     ) -> None:
@@ -144,7 +138,7 @@ class ReportPainter:
         y: float,
         max_width: float,
         size: float = 10,
-        font: str = "Pretendard",
+        font: str = "PretendardPDF",
         color: str = "ink",
         leading: float = 1.35,
         max_lines: int | None = None,
@@ -162,15 +156,15 @@ class ReportPainter:
     def footer(self, page_no: int) -> None:
         self.stroke(PALETTE["line"], 0.6)
         self.pdf.line(MARGIN, 28, PAGE_W - MARGIN, 28)
-        self.text("Business Profitability Assessment", MARGIN, 14, 8.8, "Pretendard", "muted")
-        self.text(str(page_no), PAGE_W - MARGIN, 14, 8.8, "PretendardSemi", "muted", align="right")
+        self.text("Business Profitability Assessment", MARGIN, 14, 8.8, "PretendardPDF", "muted")
+        self.text(str(page_no), PAGE_W - MARGIN, 14, 8.8, "PretendardPDF", "muted", align="right")
 
     def page_header(self, title: str, subtitle: str, page_no: int) -> None:
         self.fill(PALETTE["bg"])
         self.pdf.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-        self.text(title, MARGIN, PAGE_H - 56, 22, "PretendardBold", "ink")
+        self.text(title, MARGIN, PAGE_H - 56, 22, "PretendardPDF", "ink")
         if subtitle:
-            self.text(subtitle, MARGIN, PAGE_H - 78, 10.8, "Pretendard", "muted")
+            self.text(subtitle, MARGIN, PAGE_H - 78, 10.8, "PretendardPDF", "muted")
         self.fill(PALETTE["red"])
         self.pdf.rect(MARGIN, PAGE_H - 88, 56, 3, fill=1, stroke=0)
         self.fill(PALETTE["orange"])
@@ -181,10 +175,10 @@ class ReportPainter:
         self.card(x, y, w, h)
         self.fill(PALETTE[accent])
         self.pdf.roundRect(x, y, 5, h, 3, fill=1, stroke=0)
-        self.text(label, x + 16, y + h - 21, 9.4, "PretendardSemi", "muted")
-        self.text(value, x + 16, y + h - 48, 18.6, "PretendardBold", "ink")
+        self.text(label, x + 16, y + h - 21, 9.4, "PretendardPDF", "muted")
+        self.text(value, x + 16, y + h - 48, 18.6, "PretendardPDF", "ink")
         if h >= 66:
-            self.wrapped(note, x + 16, y + 8, w - 28, 8.2, "Pretendard", "muted", max_lines=1)
+            self.wrapped(note, x + 16, y + 8, w - 28, 8.2, "PretendardPDF", "muted", max_lines=1)
 
     def table(
         self,
@@ -209,7 +203,7 @@ class ReportPainter:
         h = title_h + header_h + row_h * max(len(shown_rows), 1)
         y = y_top - h
         self.card(x, y, w, h)
-        self.text(title, x + 12, y_top - 20, 10.6, "PretendardSemi", "ink")
+        self.text(title, x + 12, y_top - 20, 10.6, "PretendardPDF", "ink")
         total = sum(col_fracs)
         col_w = [w * frac / total for frac in col_fracs]
         lefts = [x]
@@ -221,7 +215,10 @@ class ReportPainter:
         self.stroke(PALETTE["line"], 0.6)
         self.pdf.line(x, header_y, x + w, header_y)
         for idx, head in enumerate(headers):
-            self.text(head, lefts[idx] + 8, header_y + 9, 8.9, "PretendardSemi", "ink")
+            if idx in right_cols:
+                self.text(head, lefts[idx] + col_w[idx] - 8, header_y + 9, 8.9, "PretendardPDF", "ink", align="right")
+            else:
+                self.text(head, lefts[idx] + 8, header_y + 9, 8.9, "PretendardPDF", "ink")
         for row_idx, row in enumerate(shown_rows):
             row_y = header_y - row_h * (row_idx + 1)
             if row_idx in highlight_rows:
@@ -233,7 +230,7 @@ class ReportPainter:
             self.stroke(PALETTE["line"], 0.45)
             self.pdf.line(x, row_y, x + w, row_y)
             for col_idx, cell in enumerate(row[: len(headers)]):
-                font = "PretendardSemi" if row_idx in highlight_rows else "Pretendard"
+                font = "PretendardPDF"
                 cell_text = str(cell)
                 max_text_w = col_w[col_idx] - 14
                 if col_idx in right_cols:
@@ -245,13 +242,13 @@ class ReportPainter:
                     for line_no, line in enumerate(lines):
                         self.text(line, lefts[col_idx] + 8, row_y + row_h - 11 - line_no * (size + 1), size, font, "ink")
         if max_rows and len(rows) > max_rows:
-            self.text(f"외 {len(rows) - max_rows}개 항목", x + w - 12, y + 8, 8.2, "Pretendard", "muted", align="right")
+            self.text(f"외 {len(rows) - max_rows}개 항목", x + w - 12, y + 8, 8.2, "PretendardPDF", "muted", align="right")
         return y
 
     def chart_frame(self, x: float, y: float, w: float, h: float, title: str, unit: str = "단위: 백만원") -> tuple[float, float, float, float]:
         self.card(x, y, w, h)
-        self.text(title, x + 14, y + h - 22, 10.8, "PretendardSemi", "ink")
-        self.text(unit, x + w - 14, y + h - 21, 8.8, "Pretendard", "muted", align="right")
+        self.text(title, x + 14, y + h - 22, 10.8, "PretendardPDF", "ink")
+        self.text(unit, x + w - 14, y + h - 21, 8.8, "PretendardPDF", "muted", align="right")
         return x + 46, y + 42, w - 70, h - 84
 
     def axis_bounds(self, values: list[float]) -> tuple[float, float]:
@@ -277,10 +274,10 @@ class ReportPainter:
             gy = py + ph * i / 3
             self.pdf.line(px, gy, px + pw, gy)
             label = y_min + (y_max - y_min) * i / 3
-            self.text(f"{label:,.0f}", px - 7, gy - 3, 8.3, "Pretendard", "muted", align="right")
+            self.text(f"{label:,.0f}", px - 7, gy - 3, 8.3, "PretendardPDF", "muted", align="right")
         for i, label in enumerate(labels):
             tx = px + pw * i / max(len(labels) - 1, 1)
-            self.text(label, tx, py - 18, 8.5, "Pretendard", "muted", align="center")
+            self.text(label, tx, py - 18, 8.5, "PretendardPDF", "muted", align="center")
         for series_idx, (name, series) in enumerate(series_dict.items()):
             values = [float(v) / 1_000_000 for v in series.tolist()]
             points = []
@@ -295,11 +292,11 @@ class ReportPainter:
             self.fill(color)
             for tx, ty, value in points:
                 self.pdf.circle(tx, ty, 3, fill=1, stroke=0)
-                self.text(f"{value:,.0f}", tx, ty + 8, 7.6, "PretendardSemi", "ink", align="center")
+                self.text(f"{value:,.0f}", tx, ty + 8, 7.6, "PretendardPDF", "ink", align="center")
             lx = x + 14 + series_idx * 92
             self.fill(color)
             self.pdf.rect(lx, y + h - 41, 8, 8, fill=1, stroke=0)
-            self.text(name, lx + 12, y + h - 40, 8.8, "Pretendard", "muted")
+            self.text(name, lx + 12, y + h - 40, 8.8, "PretendardPDF", "muted")
 
     def bar_chart(self, x: float, y: float, w: float, h: float, title: str, series_dict: dict[str, pd.Series]) -> None:
         px, py, pw, ph = self.chart_frame(x, y, w, h, title)
@@ -314,7 +311,7 @@ class ReportPainter:
         series_count = len(series_dict)
         bar_w = min(18, group_w / max(series_count + 1, 2))
         for i, label in enumerate(labels):
-            self.text(label, px + group_w * i + group_w / 2, py - 18, 8.5, "Pretendard", "muted", align="center")
+            self.text(label, px + group_w * i + group_w / 2, py - 18, 8.5, "PretendardPDF", "muted", align="center")
         for s_idx, (name, series) in enumerate(series_dict.items()):
             color = CHART_COLORS[s_idx % len(CHART_COLORS)]
             self.fill(color)
@@ -324,10 +321,10 @@ class ReportPainter:
                 bx = cx - (series_count * bar_w) / 2 + s_idx * bar_w
                 by = py + ((value - y_min) / (y_max - y_min)) * ph
                 self.pdf.rect(bx, min(zero_y, by), bar_w * 0.78, abs(by - zero_y), fill=1, stroke=0)
-                self.text(f"{value:,.0f}", bx + bar_w * 0.39, max(zero_y, by) + 6, 7.5, "PretendardSemi", "ink", align="center")
+                self.text(f"{value:,.0f}", bx + bar_w * 0.39, max(zero_y, by) + 6, 7.5, "PretendardPDF", "ink", align="center")
             lx = x + 14 + s_idx * 92
             self.pdf.rect(lx, y + h - 41, 8, 8, fill=1, stroke=0)
-            self.text(name, lx + 12, y + h - 40, 8.8, "Pretendard", "muted")
+            self.text(name, lx + 12, y + h - 40, 8.8, "PretendardPDF", "muted")
 
 
 def build_pdf_report(
@@ -356,11 +353,11 @@ def build_pdf_report(
     pdf.rect(0, PAGE_H - 132, 285, 132, fill=1, stroke=0)
     p.fill(PALETTE["orange"])
     pdf.rect(285, PAGE_H - 132, 60, 132, fill=1, stroke=0)
-    p.text("Business", 54, 350, 27, "PretendardBold", "paper")
-    p.text("Profitability", 54, 315, 27, "PretendardBold", "paper")
-    p.text("Report", 54, 280, 27, "PretendardBold", "paper")
-    p.text("사업 수익성 분석 보고서", 360, 372, 29, "PretendardBold", "ink")
-    p.wrapped("현재 입력값과 결과 대시보드를 바탕으로 작성된 투자검토용 요약 보고서입니다.", 364, 336, 420, 12.2, "Pretendard", "muted", max_lines=2)
+    p.text("Business", 54, 350, 27, "PretendardPDF", "paper")
+    p.text("Profitability", 54, 315, 27, "PretendardPDF", "paper")
+    p.text("Report", 54, 280, 27, "PretendardPDF", "paper")
+    p.text("사업 수익성 분석 보고서", 360, 372, 29, "PretendardPDF", "ink")
+    p.wrapped("현재 입력값과 결과 대시보드를 바탕으로 작성된 투자검토용 요약 보고서입니다.", 364, 336, 420, 12.2, "PretendardPDF", "muted", max_lines=2)
     meta = [
         ["사업명", assumptions.get("business_name", "")],
         ["업종", assumptions.get("industry", "")],
@@ -368,7 +365,7 @@ def build_pdf_report(
         ["기준 통화", assumptions.get("currency", "KRW")],
     ]
     p.table(364, 282, 392, "Report Scope", ["구분", "내용"], meta, [0.28, 0.72], row_h=28, size=10.2)
-    p.text("Prepared for decision review", 364, 92, 10.5, "Pretendard", "muted")
+    p.text("Prepared for decision review", 364, 92, 10.5, "PretendardPDF", "muted")
     p.footer(1)
     pdf.showPage()
 
@@ -385,7 +382,7 @@ def build_pdf_report(
     for idx, item in enumerate(kpi_items):
         p.kpi_card(MARGIN + (idx % 3) * 256, 386 - (idx // 3) * 86, 234, 68, *item)
     p.card(MARGIN, 102, PAGE_W - MARGIN * 2, 155)
-    p.text("Decision Readout", MARGIN + 18, 226, 14, "PretendardBold", "ink")
+    p.text("Decision Readout", MARGIN + 18, 226, 14, "PretendardPDF", "ink")
     bullets = [
         f"영업이익률은 {pct_ratio(kpis['영업이익률'])}로 추정됩니다. 누적 영업이익 / 누적 매출 기준입니다.",
         f"ROI는 {pct_ratio(kpis['ROI'])}이며, 초기투자비 대비 5년 누적 순이익 기준입니다.",
@@ -395,7 +392,7 @@ def build_pdf_report(
     for idx, bullet in enumerate(bullets):
         p.fill(PALETTE["red"])
         pdf.circle(MARGIN + 23, 196 - idx * 26, 2.4, fill=1, stroke=0)
-        p.wrapped(bullet, MARGIN + 34, 192 - idx * 26, PAGE_W - MARGIN * 2 - 64, 10.8, "Pretendard", "ink", max_lines=1)
+        p.wrapped(bullet, MARGIN + 34, 192 - idx * 26, PAGE_W - MARGIN * 2 - 64, 10.8, "PretendardPDF", "ink", max_lines=1)
     pdf.showPage()
 
     # Page 3: Input Summary 1
@@ -444,8 +441,8 @@ def build_pdf_report(
     ]
     p.table(MARGIN, 478, PAGE_W - MARGIN * 2, "인력 입력 핵심 요약", ["직무명", "인원", "1인당 월급", "복리후생", "연봉상승", "인원증가"], staff_rows, [0.28, 0.12, 0.18, 0.15, 0.14, 0.13], row_h=32, size=9.4, right_cols={1, 2, 3, 4, 5}, max_rows=8)
     p.card(MARGIN, 92, PAGE_W - MARGIN * 2, 92)
-    p.text("Note", MARGIN + 18, 152, 12, "PretendardBold", "ink")
-    p.wrapped("인력계획을 비용에 자동 반영하는 경우 인건비는 비용 모델에 포함됩니다. 본 표는 입력 가정 확인용이며, 금액은 모두 백만원 단위로 표시했습니다.", MARGIN + 18, 128, PAGE_W - MARGIN * 2 - 36, 10.4, "Pretendard", "ink", max_lines=3)
+    p.text("Note", MARGIN + 18, 152, 12, "PretendardPDF", "ink")
+    p.wrapped("인력계획을 비용에 자동 반영하는 경우 인건비는 비용 모델에 포함됩니다. 본 표는 입력 가정 확인용이며, 금액은 모두 백만원 단위로 표시했습니다.", MARGIN + 18, 128, PAGE_W - MARGIN * 2 - 36, 10.4, "PretendardPDF", "ink", max_lines=3)
     pdf.showPage()
 
     # Page 6: Dashboard
@@ -463,8 +460,8 @@ def build_pdf_report(
     p.line_chart(MARGIN, 150, 360, 170, "연도별 매출 추이", {"총매출": model_result["series"]["revenue"]})
     p.bar_chart(438, 150, 360, 170, "영업이익 및 순이익 추이", {"영업이익": model_result["series"]["operating_income"], "순이익": model_result["series"]["net_income"]})
     p.card(MARGIN, 66, PAGE_W - MARGIN * 2, 58)
-    p.text("Decision Point", MARGIN + 18, 100, 12, "PretendardBold", "ink")
-    p.wrapped(f"누적 영업이익률 {pct_ratio(kpis['영업이익률'])}, ROI {pct_ratio(kpis['ROI'])}, 투자회수기간 {kpis['투자회수기간']} 기준으로 사업성을 판단합니다.", MARGIN + 130, 100, PAGE_W - MARGIN * 2 - 150, 10.2, "Pretendard", "ink", max_lines=2)
+    p.text("Decision Point", MARGIN + 18, 100, 12, "PretendardPDF", "ink")
+    p.wrapped(f"누적 영업이익률 {pct_ratio(kpis['영업이익률'])}, ROI {pct_ratio(kpis['ROI'])}, 투자회수기간 {kpis['투자회수기간']} 기준으로 사업성을 판단합니다.", MARGIN + 130, 100, PAGE_W - MARGIN * 2 - 150, 10.2, "PretendardPDF", "ink", max_lines=2)
     pdf.showPage()
 
     # Page 7: P&L
@@ -494,8 +491,8 @@ def build_pdf_report(
     p.table(MARGIN, 456, 330, "현금흐름표", ["연도", "현금흐름", "누적현금흐름"], cash_rows, [0.28, 0.36, 0.36], row_h=32, size=9.6, right_cols={1, 2}, highlight_rows=highlight)
     p.line_chart(400, 204, 398, 252, "누적현금흐름 추이", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]})
     p.card(400, 92, 398, 82)
-    p.text("Payback Insight", 418, 144, 13, "PretendardBold", "ink")
-    p.wrapped(f"투자회수기간은 {kpis['투자회수기간']}이며, Year 0의 초기투자비는 음수 현금흐름으로 반영됩니다.", 418, 120, 356, 10.5, "Pretendard", "ink", max_lines=2)
+    p.text("Payback Insight", 418, 144, 13, "PretendardPDF", "ink")
+    p.wrapped(f"투자회수기간은 {kpis['투자회수기간']}이며, Year 0의 초기투자비는 음수 현금흐름으로 반영됩니다.", 418, 120, 356, 10.5, "PretendardPDF", "ink", max_lines=2)
     pdf.showPage()
 
     # Page 9: Break-even
@@ -512,8 +509,8 @@ def build_pdf_report(
     break_even_series = pd.Series({row["연도"]: row["손익분기매출"] for _, row in model_result["break_even"].iterrows()}, name="손익분기 매출")
     p.line_chart(MARGIN, 86, 360, 188, "예상매출 vs 손익분기매출", {"예상 매출": model_result["series"]["revenue"], "손익분기 매출": break_even_series})
     p.card(438, 86, 360, 188)
-    p.text("Decision Point", 458, 230, 13, "PretendardBold", "ink")
-    p.wrapped("예상매출이 손익분기매출을 안정적으로 초과하면 고정비 부담을 흡수할 여지가 커집니다. 안전마진율이 낮은 연도는 가격, 판매량, 비용 구조 조정이 필요한 구간입니다.", 458, 202, 318, 10.2, "Pretendard", "ink", max_lines=6)
+    p.text("Decision Point", 458, 230, 13, "PretendardPDF", "ink")
+    p.wrapped("예상매출이 손익분기매출을 안정적으로 초과하면 고정비 부담을 흡수할 여지가 커집니다. 안전마진율이 낮은 연도는 가격, 판매량, 비용 구조 조정이 필요한 구간입니다.", 458, 202, 318, 10.2, "PretendardPDF", "ink", max_lines=6)
     pdf.showPage()
 
     pdf.save()
