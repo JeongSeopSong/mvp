@@ -39,10 +39,13 @@ CHART_COLORS = [PALETTE["red"], PALETTE["orange"], PALETTE["blue"], PALETTE["gre
 
 
 def register_fonts() -> None:
+    # Pretendard Std TTF does not include Hangul glyphs. Use the full variable
+    # Pretendard TTF so ReportLab can embed Korean text without tofu/broken glyphs.
+    variable_font = FONT_DIR / "PretendardVariable.ttf"
     fonts = {
-        "Pretendard": FONT_DIR / "PretendardStd-Regular.ttf",
-        "PretendardSemi": FONT_DIR / "PretendardStd-SemiBold.ttf",
-        "PretendardBold": FONT_DIR / "PretendardStd-Bold.ttf",
+        "Pretendard": variable_font,
+        "PretendardSemi": variable_font,
+        "PretendardBold": variable_font,
     }
     for font_name, font_path in fonts.items():
         if font_name not in pdfmetrics.getRegisteredFontNames():
