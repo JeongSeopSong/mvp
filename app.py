@@ -15,6 +15,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas
 from reportlab.graphics.shapes import Circle, Drawing, Line, Rect, String
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
@@ -966,6 +968,9 @@ def build_pdf_report(
     output = BytesIO()
     pages[0].save(output, format="PDF", save_all=True, append_images=pages[1:], resolution=150.0)
     return output.getvalue()
+
+
+from pdf_vector_report import build_pdf_report
 
 def as_float(value: Any, default: float = 0.0) -> float:
     """Streamlit 입력 위젯에 넣을 숫자를 안전하게 만든다."""
