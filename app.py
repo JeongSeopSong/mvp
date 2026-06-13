@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import copy
-import json
+from io import BytesIO
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from model.costs import COST_TYPES, default_cost_df, normalize_cost_df
 from model.financials import INITIAL_INVESTMENT_KEYS, build_financial_model
@@ -208,7 +215,7 @@ def initialize_session() -> None:
 
 
 def apply_project_data(data: dict[str, Any]) -> None:
-    """JSON/샘플 데이터를 현재 세션에 적용한다."""
+    """업종 기본값 데이터를 현재 세션에 적용한다."""
     assumptions = copy.deepcopy(DEFAULT_ASSUMPTIONS)
     assumptions.update(data.get("assumptions", {}))
     if "initial_investment" not in assumptions or assumptions["initial_investment"] is None:
@@ -224,15 +231,150 @@ def apply_project_data(data: dict[str, Any]) -> None:
     st.session_state["data_version"] += 1
 
 
-def export_project_json(assumptions: dict[str, Any], revenue_df: pd.DataFrame, cost_df: pd.DataFrame, staffing_df: pd.DataFrame) -> str:
-    """현재 입력값을 JSON 문자열로 변환한다."""
-    data = {
-        "assumptions": assumptions,
-        "revenue_items": revenue_df.to_dict(orient="records"),
-        "cost_items": cost_df.to_dict(orient="records"),
-        "staffing_items": staffing_df.to_dict(orient="records"),
+def pdf_filename(assumptions: dict[str, Any]) -> str:
+    """사업명 기반의 PDF 파일명을 만든다."""
+    raw_name = str(assumptions.get("business_name") or "business_report").strip()
+    safe_name = "".join(ch if ch.isalnum() or ch in (" ", "_", "-") else "_" for ch in raw_name).strip()
+    return f"{safe_name.replace(' ', '_') or 'business_report'}_report.pdf"
+
+
+def format_pdf_cell(value: Any) -> str:
+    """PDF 표에 넣을 값을 문자열로 정리한다."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    if isinstance(value, float):
+        return f"{value:,.2f}".rstrip("0").rstrip(".")
+    if isinstance(value, int):
+        return f"{value:,}"
+    return str(value)
+
+
+def dataframe_for_pdf(df: pd.DataFrame, max_rows: int | None = None) -> list[list[str]]:
+    """DataFrame을 ReportLab 표 데이터로 변환한다."""
+    safe_df = df.copy()
+    if max_rows is not None:
+        safe_df = safe_df.head(max_rows)
+    rows = [[str(col) for col in safe_df.columns]]
+    for _, row in safe_df.iterrows():
+        rows.append([format_pdf_cell(row[col]) for col in safe_df.columns])
+    return rows
+
+
+def pdf_table(rows: list[list[str]], repeat_header: bool = True) -> Table:
+    """공통 PDF 표 스타일을 적용한다."""
+    table = Table(rows, repeatRows=1 if repeat_header and len(rows) > 1 else 0)
+    table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), "HYGothic-Medium"),
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E78")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    return table
+
+
+def report_section(story: list[Any], title: str, rows: list[list[str]], styles: dict[str, ParagraphStyle]) -> None:
+    """PDF 보고서 섹션을 추가한다."""
+    story.append(Paragraph(title, styles["section"]))
+    story.append(pdf_table(rows))
+    story.append(Spacer(1, 7 * mm))
+
+
+def build_pdf_report(
+    assumptions: dict[str, Any],
+    revenue_df: pd.DataFrame,
+    cost_df: pd.DataFrame,
+    staffing_df: pd.DataFrame,
+    model_result: dict[str, Any],
+    currency: str,
+) -> bytes:
+    """입력값과 결과 대시보드를 PDF 보고서로 생성한다."""
+    pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
+    pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
+
+    output = BytesIO()
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=landscape(A4),
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
+    )
+    base_styles = getSampleStyleSheet()
+    styles = {
+        "title": ParagraphStyle("KoreanTitle", parent=base_styles["Title"], fontName="HYGothic-Medium", fontSize=18, leading=24, spaceAfter=8),
+        "section": ParagraphStyle("KoreanSection", parent=base_styles["Heading2"], fontName="HYGothic-Medium", fontSize=12, leading=16, spaceBefore=8, spaceAfter=5),
+        "body": ParagraphStyle("KoreanBody", parent=base_styles["BodyText"], fontName="HYSMyeongJo-Medium", fontSize=8, leading=11),
     }
-    return json.dumps(data, ensure_ascii=False, indent=2)
+
+    initial = assumptions.get("initial_investment", {})
+    basic_rows = [
+        ["항목", "값"],
+        ["사업명", assumptions.get("business_name", "")],
+        ["업종", assumptions.get("industry", "")],
+        ["분석기간(년)", assumptions.get("analysis_years", "")],
+        ["기준 통화", assumptions.get("currency", "KRW")],
+        ["단순 세율(%)", assumptions.get("tax_rate_pct", 0)],
+    ]
+    growth_rows = [
+        ["항목", "값"],
+        ["매출 성장률(%)", assumptions.get("revenue_growth_pct", 0)],
+        ["비용 증가율(%)", assumptions.get("cost_growth_pct", 0)],
+        ["인건비 증가율(%)", assumptions.get("labor_growth_pct", 0)],
+        ["임대료 증가율(%)", assumptions.get("rent_growth_pct", 0)],
+        ["기타 비용 증가율(%)", assumptions.get("other_growth_pct", 0)],
+    ]
+    investment_rows = [["초기투자비 항목", "금액"]] + [[key, format_money(initial.get(key, 0), currency)] for key in INITIAL_INVESTMENT_KEYS]
+
+    kpi_rows = [["KPI", "값"]]
+    for key, value in model_result["kpis"].items():
+        if key in ["영업이익률", "순이익률", "ROI"]:
+            display = format_pct(value)
+        elif isinstance(value, (int, float)):
+            display = format_money(value, currency)
+        else:
+            display = str(value)
+        kpi_rows.append([key, display])
+
+    story: list[Any] = [
+        Paragraph("사업 수익성 분석 보고서", styles["title"]),
+        Paragraph("현재 입력값과 결과 대시보드 기준으로 생성된 PDF입니다.", styles["body"]),
+        Spacer(1, 6 * mm),
+    ]
+    report_section(story, "1. 기본 설정", basic_rows, styles)
+    report_section(story, "2. 성장률", growth_rows, styles)
+    report_section(story, "3. 초기투자비", investment_rows, styles)
+    report_section(story, "4. 매출 입력", dataframe_for_pdf(revenue_df), styles)
+    report_section(story, "5. 비용 입력", dataframe_for_pdf(cost_df), styles)
+    report_section(story, "6. 인력 입력", dataframe_for_pdf(staffing_df), styles)
+    story.append(PageBreak())
+    report_section(story, "7. 핵심 KPI", kpi_rows, styles)
+    report_section(story, "8. 손익계산서", dataframe_for_pdf(formatted_financial_table(model_result["pnl"], currency)), styles)
+
+    cash_display = model_result["cash_flow"].copy()
+    for col in ["현금흐름", "누적현금흐름"]:
+        cash_display[col] = cash_display[col].apply(lambda x: format_money(x, currency))
+    report_section(story, "9. 현금흐름", dataframe_for_pdf(cash_display), styles)
+    report_section(story, "10. 손익분기점", dataframe_for_pdf(formatted_break_even_table(model_result["break_even"], currency)), styles)
+
+    doc.build(story)
+    return output.getvalue()
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
@@ -478,15 +620,6 @@ def render_sidebar() -> tuple[dict[str, Any], bool]:
         apply_project_data(preset_project_data(selected_industry))
         st.rerun()
 
-    uploaded = st.sidebar.file_uploader("저장한 JSON 불러오기", type=["json"])
-    if uploaded is not None and st.sidebar.button("업로드 JSON 적용", use_container_width=True):
-        try:
-            data = json.loads(uploaded.read().decode("utf-8"))
-            apply_project_data(data)
-            st.rerun()
-        except Exception as exc:
-            st.sidebar.error(f"JSON을 읽지 못했습니다: {exc}")
-
     assumptions = st.session_state["assumptions"].copy()
     initial = assumptions.get("initial_investment", {}).copy()
 
@@ -523,7 +656,7 @@ def main() -> None:
     st.title("📊 사업 수익성 분석 프로그램 MVP")
     st.caption("업종을 고른 뒤 항목명과 숫자를 직접 입력하면 화면 안에서 손익계산서, 현금흐름, 손익분기점을 바로 확인합니다.")
 
-    input_tab, dashboard_tab, json_tab = st.tabs(["① 입력", "② 결과 대시보드", "③ 저장/복원"])
+    input_tab, dashboard_tab, pdf_tab = st.tabs(["① 입력", "② 결과 대시보드", "③ PDF 보고서"])
 
     with input_tab:
         st.subheader("A. 매출 입력")
@@ -624,23 +757,32 @@ def main() -> None:
         st.subheader("손익분기점")
         st.dataframe(formatted_break_even_table(model_result["break_even"], currency), hide_index=True, use_container_width=True)
 
-    with json_tab:
-        st.subheader("현재 입력값 JSON 저장")
-        project_json = export_project_json(
+    with pdf_tab:
+        st.subheader("PDF 보고서 추출")
+        st.caption("현재 입력값과 결과 대시보드를 하나의 PDF 보고서로 저장합니다.")
+        pdf_bytes = build_pdf_report(
             assumptions,
             st.session_state["revenue_df"],
             st.session_state["cost_df"],
             st.session_state["staffing_df"],
+            model_result,
+            currency,
         )
         st.download_button(
-            "입력값 JSON 다운로드",
-            data=project_json,
-            file_name="business_profitability_inputs.json",
-            mime="application/json",
+            "PDF 보고서 다운로드",
+            data=pdf_bytes,
+            file_name=pdf_filename(assumptions),
+            mime="application/pdf",
             use_container_width=True,
         )
-        with st.expander("JSON 미리보기"):
-            st.code(project_json, language="json")
+        st.markdown(
+            """
+            포함 항목:
+            - 기본 설정, 성장률, 초기투자비
+            - 매출 입력, 비용 입력, 인력 입력
+            - 핵심 KPI, 손익계산서, 현금흐름, 손익분기점
+            """
+        )
 
 
 if __name__ == "__main__":
