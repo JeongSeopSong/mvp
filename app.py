@@ -13,6 +13,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.graphics.shapes import Circle, Drawing, Line, Rect, String
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from model.costs import COST_TYPES, default_cost_df, normalize_cost_df
@@ -288,6 +289,159 @@ def pdf_table(rows: list[list[str]], repeat_header: bool = True) -> Table:
     return table
 
 
+def compact_pdf_table(rows: list[list[str]]) -> Table:
+    """요약 페이지용 compact 표 스타일을 적용한다."""
+    table = Table(rows)
+    table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), "HYGothic-Medium"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2D2D2D")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D7D7D7")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    return table
+
+
+def value_to_millions(value: Any) -> float:
+    """차트 표시용으로 금액을 백만원 단위로 변환한다."""
+    try:
+        return float(value) / 1_000_000
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def chart_bounds(values: list[float]) -> tuple[float, float]:
+    """차트 축 범위를 계산한다."""
+    if not values:
+        return 0.0, 1.0
+    min_value = min(values)
+    max_value = max(values)
+    if min_value == max_value:
+        padding = abs(max_value) * 0.15 or 1.0
+        return min_value - padding, max_value + padding
+    padding = (max_value - min_value) * 0.12
+    return min(0.0, min_value - padding), max_value + padding
+
+
+def scale_y(value: float, min_value: float, max_value: float, y: float, height: float) -> float:
+    """숫자를 차트 y좌표로 변환한다."""
+    if max_value == min_value:
+        return y + height / 2
+    return y + ((value - min_value) / (max_value - min_value)) * height
+
+
+def chart_canvas(title: str, width: float = 240, height: float = 145) -> tuple[Drawing, float, float, float, float]:
+    """보고서 차트용 캔버스를 만든다."""
+    drawing = Drawing(width, height)
+    drawing.add(Rect(0, 0, width, height, fillColor=colors.white, strokeColor=colors.HexColor("#D7D7D7"), strokeWidth=0.5))
+    drawing.add(Rect(0, height - 18, width, 18, fillColor=colors.HexColor("#2D2D2D"), strokeColor=None))
+    drawing.add(String(8, height - 13, title, fontName="HYGothic-Medium", fontSize=8, fillColor=colors.white))
+    return drawing, 34, 26, width - 48, height - 52
+
+
+def line_chart_pdf(title: str, series_dict: dict[str, pd.Series], width: float = 240, height: float = 145) -> Drawing:
+    """대시보드 추이 차트를 PDF용 선 그래프로 그린다."""
+    palette = [colors.HexColor("#D04A02"), colors.HexColor("#EB8C00"), colors.HexColor("#7D7D7D"), colors.HexColor("#DB536A")]
+    drawing, x0, y0, plot_w, plot_h = chart_canvas(title, width, height)
+    labels = list(next(iter(series_dict.values())).index) if series_dict else []
+    values_by_name = {name: [value_to_millions(v) for v in series.values] for name, series in series_dict.items()}
+    all_values = [value for values in values_by_name.values() for value in values]
+    min_value, max_value = chart_bounds(all_values)
+
+    drawing.add(Line(x0, y0, x0 + plot_w, y0, strokeColor=colors.HexColor("#B8B8B8"), strokeWidth=0.5))
+    drawing.add(Line(x0, y0, x0, y0 + plot_h, strokeColor=colors.HexColor("#B8B8B8"), strokeWidth=0.5))
+    if min_value < 0 < max_value:
+        zero_y = scale_y(0, min_value, max_value, y0, plot_h)
+        drawing.add(Line(x0, zero_y, x0 + plot_w, zero_y, strokeColor=colors.HexColor("#D7D7D7"), strokeWidth=0.4))
+
+    for series_idx, (name, values) in enumerate(values_by_name.items()):
+        color = palette[series_idx % len(palette)]
+        points: list[tuple[float, float]] = []
+        for idx, value in enumerate(values):
+            x = x0 + (plot_w * idx / max(len(values) - 1, 1))
+            y = scale_y(value, min_value, max_value, y0, plot_h)
+            points.append((x, y))
+            drawing.add(Circle(x, y, 2, fillColor=color, strokeColor=color))
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            drawing.add(Line(x1, y1, x2, y2, strokeColor=color, strokeWidth=1.4))
+        legend_x = x0 + series_idx * 72
+        drawing.add(Rect(legend_x, 7, 7, 4, fillColor=color, strokeColor=None))
+        drawing.add(String(legend_x + 10, 6, name, fontName="HYGothic-Medium", fontSize=6, fillColor=colors.HexColor("#404040")))
+
+    for idx, label in enumerate(labels):
+        x = x0 + (plot_w * idx / max(len(labels) - 1, 1))
+        drawing.add(String(x - 10, y0 - 11, str(label).replace("Year ", "Y"), fontName="HYGothic-Medium", fontSize=5.5, fillColor=colors.HexColor("#555555")))
+    drawing.add(String(5, y0 + plot_h - 4, f"{max_value:,.0f}M", fontName="HYGothic-Medium", fontSize=5.5, fillColor=colors.HexColor("#555555")))
+    drawing.add(String(5, y0 - 2, f"{min_value:,.0f}M", fontName="HYGothic-Medium", fontSize=5.5, fillColor=colors.HexColor("#555555")))
+    return drawing
+
+
+def bar_chart_pdf(title: str, series_dict: dict[str, pd.Series], width: float = 240, height: float = 145) -> Drawing:
+    """대시보드 비교 차트를 PDF용 막대 그래프로 그린다."""
+    palette = [colors.HexColor("#D04A02"), colors.HexColor("#EB8C00"), colors.HexColor("#7D7D7D")]
+    drawing, x0, y0, plot_w, plot_h = chart_canvas(title, width, height)
+    labels = list(next(iter(series_dict.values())).index) if series_dict else []
+    names = list(series_dict.keys())
+    values_by_name = {name: [value_to_millions(v) for v in series.values] for name, series in series_dict.items()}
+    all_values = [value for values in values_by_name.values() for value in values]
+    min_value, max_value = chart_bounds(all_values)
+    zero_y = scale_y(0, min_value, max_value, y0, plot_h)
+    drawing.add(Line(x0, zero_y, x0 + plot_w, zero_y, strokeColor=colors.HexColor("#B8B8B8"), strokeWidth=0.6))
+    group_w = plot_w / max(len(labels), 1)
+    bar_w = min(10, group_w / max(len(names), 1) * 0.65)
+    for idx, label in enumerate(labels):
+        center = x0 + group_w * idx + group_w / 2
+        for series_idx, name in enumerate(names):
+            value = values_by_name[name][idx]
+            bar_x = center + (series_idx - (len(names) - 1) / 2) * (bar_w + 2) - bar_w / 2
+            bar_y = scale_y(value, min_value, max_value, y0, plot_h)
+            rect_y = min(zero_y, bar_y)
+            rect_h = max(abs(bar_y - zero_y), 1)
+            drawing.add(Rect(bar_x, rect_y, bar_w, rect_h, fillColor=palette[series_idx % len(palette)], strokeColor=None))
+        drawing.add(String(center - 8, y0 - 11, str(label).replace("Year ", "Y"), fontName="HYGothic-Medium", fontSize=5.5, fillColor=colors.HexColor("#555555")))
+    for series_idx, name in enumerate(names):
+        legend_x = x0 + series_idx * 72
+        drawing.add(Rect(legend_x, 7, 7, 4, fillColor=palette[series_idx % len(palette)], strokeColor=None))
+        drawing.add(String(legend_x + 10, 6, name, fontName="HYGothic-Medium", fontSize=6, fillColor=colors.HexColor("#404040")))
+    return drawing
+
+
+def horizontal_bar_pdf(title: str, labels: list[str], values: list[float], width: float = 240, height: float = 145) -> Drawing:
+    """비용 구성 차트를 PDF용 가로 막대로 그린다."""
+    drawing, x0, y0, plot_w, plot_h = chart_canvas(title, width, height)
+    max_value = max(values) if values else 1.0
+    row_h = plot_h / max(len(values), 1)
+    for idx, (label, value) in enumerate(zip(labels, values)):
+        y = y0 + plot_h - (idx + 1) * row_h + row_h * 0.25
+        bar_w = (value / max_value) * (plot_w * 0.58) if max_value else 0
+        drawing.add(String(x0, y + 2, str(label)[:14], fontName="HYGothic-Medium", fontSize=5.5, fillColor=colors.HexColor("#404040")))
+        drawing.add(Rect(x0 + 82, y, bar_w, max(row_h * 0.45, 4), fillColor=colors.HexColor("#D04A02"), strokeColor=None))
+        drawing.add(String(x0 + 86 + bar_w, y + 1, f"{value_to_millions(value):,.0f}M", fontName="HYGothic-Medium", fontSize=5.2, fillColor=colors.HexColor("#555555")))
+    return drawing
+
+
+def chart_grid(charts: list[Drawing]) -> Table:
+    """PDF 차트를 2열 그리드로 배치한다."""
+    rows = []
+    for idx in range(0, len(charts), 2):
+        row = charts[idx : idx + 2]
+        if len(row) == 1:
+            row.append(Drawing(240, 145))
+        rows.append(row)
+    table = Table(rows, colWidths=[250, 250])
+    table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+    return table
+
+
 def report_section(story: list[Any], title: str, rows: list[list[str]], styles: dict[str, ParagraphStyle]) -> None:
     """PDF 보고서 섹션을 추가한다."""
     story.append(Paragraph(title, styles["section"]))
@@ -318,9 +472,11 @@ def build_pdf_report(
     )
     base_styles = getSampleStyleSheet()
     styles = {
-        "title": ParagraphStyle("KoreanTitle", parent=base_styles["Title"], fontName="HYGothic-Medium", fontSize=18, leading=24, spaceAfter=8),
-        "section": ParagraphStyle("KoreanSection", parent=base_styles["Heading2"], fontName="HYGothic-Medium", fontSize=12, leading=16, spaceBefore=8, spaceAfter=5),
-        "body": ParagraphStyle("KoreanBody", parent=base_styles["BodyText"], fontName="HYSMyeongJo-Medium", fontSize=8, leading=11),
+        "cover_title": ParagraphStyle("CoverTitle", parent=base_styles["Title"], fontName="HYGothic-Medium", fontSize=25, leading=31, textColor=colors.HexColor("#2D2D2D"), spaceAfter=8),
+        "cover_subtitle": ParagraphStyle("CoverSubtitle", parent=base_styles["BodyText"], fontName="HYSMyeongJo-Medium", fontSize=11, leading=15, textColor=colors.HexColor("#555555")),
+        "title": ParagraphStyle("KoreanTitle", parent=base_styles["Title"], fontName="HYGothic-Medium", fontSize=18, leading=24, textColor=colors.HexColor("#2D2D2D"), spaceAfter=8),
+        "section": ParagraphStyle("KoreanSection", parent=base_styles["Heading2"], fontName="HYGothic-Medium", fontSize=12, leading=16, textColor=colors.HexColor("#2D2D2D"), spaceBefore=8, spaceAfter=5),
+        "body": ParagraphStyle("KoreanBody", parent=base_styles["BodyText"], fontName="HYSMyeongJo-Medium", fontSize=8, leading=11, textColor=colors.HexColor("#404040")),
     }
 
     initial = assumptions.get("initial_investment", {})
@@ -352,14 +508,86 @@ def build_pdf_report(
             display = str(value)
         kpi_rows.append([key, display])
 
+    cover_art = Drawing(760, 80)
+    cover_art.add(Rect(0, 0, 760, 80, fillColor=colors.HexColor("#2D2D2D"), strokeColor=None))
+    cover_art.add(Rect(0, 0, 175, 80, fillColor=colors.HexColor("#D04A02"), strokeColor=None))
+    cover_art.add(Rect(175, 0, 110, 80, fillColor=colors.HexColor("#EB8C00"), strokeColor=None))
+    cover_art.add(Rect(285, 0, 70, 80, fillColor=colors.HexColor("#FFB600"), strokeColor=None))
+    cover_art.add(String(18, 48, "Business Profitability", fontName="HYGothic-Medium", fontSize=13, fillColor=colors.white))
+    cover_art.add(String(18, 28, "Assessment Report", fontName="HYGothic-Medium", fontSize=13, fillColor=colors.white))
+
     story: list[Any] = [
-        Paragraph("사업 수익성 분석 보고서", styles["title"]),
-        Paragraph("현재 입력값과 결과 대시보드 기준으로 생성된 PDF입니다.", styles["body"]),
-        Spacer(1, 6 * mm),
+        cover_art,
+        Spacer(1, 18 * mm),
+        Paragraph("사업 수익성 분석 보고서", styles["cover_title"]),
+        Paragraph("현재 입력값과 결과 대시보드 기준으로 생성된 의사결정용 요약 보고서입니다.", styles["cover_subtitle"]),
+        Spacer(1, 10 * mm),
+        compact_pdf_table(
+            [
+                ["사업명", "업종", "분석기간", "기준 통화"],
+                [
+                    str(assumptions.get("business_name", "")),
+                    str(assumptions.get("industry", "")),
+                    f"{assumptions.get('analysis_years', '')}년",
+                    str(assumptions.get("currency", "KRW")),
+                ],
+            ]
+        ),
+        Spacer(1, 12 * mm),
+        Paragraph("보고서 구성: 기본 설정, 성장률, 초기투자비, 입력 가정, KPI, 대시보드 차트, 손익계산서, 현금흐름, 손익분기점", styles["body"]),
+        PageBreak(),
+        Paragraph("Executive Summary", styles["title"]),
+        Paragraph("핵심 수익성 지표와 투자 회수 가능성을 먼저 확인하고, 이어지는 차트와 상세 표에서 입력 가정과 계산 결과를 검토합니다.", styles["body"]),
+        Spacer(1, 5 * mm),
     ]
+    story.append(
+        compact_pdf_table(
+            [
+                ["총매출", "영업이익", "순이익", "ROI", "투자회수기간"],
+                [
+                    format_money(model_result["kpis"]["총매출"], currency),
+                    format_money(model_result["kpis"]["영업이익"], currency),
+                    format_money(model_result["kpis"]["순이익"], currency),
+                    format_pct(model_result["kpis"]["ROI"]),
+                    str(model_result["kpis"]["투자회수기간"]),
+                ],
+            ]
+        )
+    )
+    story.append(Spacer(1, 6 * mm))
     report_section(story, "1. 기본 설정", basic_rows, styles)
     report_section(story, "2. 성장률", growth_rows, styles)
     report_section(story, "3. 초기투자비", investment_rows, styles)
+    story.append(PageBreak())
+
+    story.append(Paragraph("Dashboard View", styles["title"]))
+    story.append(Paragraph("앱 대시보드의 핵심 그림을 PDF 보고서에 함께 반영했습니다. 금액 축은 백만원 단위입니다.", styles["body"]))
+    story.append(Spacer(1, 5 * mm))
+    cost_detail = model_result["costs"]["detail"]
+    first_year = "Year 1"
+    cost_labels: list[str] = []
+    cost_values: list[float] = []
+    if first_year in cost_detail.columns:
+        cost_slice = cost_detail[["비용항목명", first_year]].copy()
+        cost_slice = cost_slice[cost_slice[first_year] > 0].sort_values(first_year, ascending=False).head(6)
+        cost_labels = [str(value) for value in cost_slice["비용항목명"].tolist()]
+        cost_values = [float(value) for value in cost_slice[first_year].tolist()]
+    break_even_series = pd.Series(
+        {row["연도"]: row["손익분기매출"] for _, row in model_result["break_even"].iterrows()},
+        name="손익분기 매출",
+    )
+    charts = [
+        line_chart_pdf("연도별 매출 추이", {"총매출": model_result["series"]["revenue"]}),
+        line_chart_pdf("연도별 비용 추이", {"총비용": model_result["series"]["total_cost"]}),
+        bar_chart_pdf("영업이익 / 순이익", {"영업이익": model_result["series"]["operating_income"], "순이익": model_result["series"]["net_income"]}),
+        line_chart_pdf("누적 현금흐름", {"누적현금흐름": model_result["series"]["cumulative_cash_flow"]}),
+        line_chart_pdf("손익분기점 분석", {"예상 매출": model_result["series"]["revenue"], "손익분기 매출": break_even_series}),
+    ]
+    if cost_labels:
+        charts.append(horizontal_bar_pdf("비용 구성 - Year 1", cost_labels, cost_values))
+    story.append(chart_grid(charts))
+    story.append(PageBreak())
+
     report_section(story, "4. 매출 입력", dataframe_for_pdf(revenue_df), styles)
     report_section(story, "5. 비용 입력", dataframe_for_pdf(cost_df), styles)
     report_section(story, "6. 인력 입력", dataframe_for_pdf(staffing_df), styles)
@@ -373,7 +601,15 @@ def build_pdf_report(
     report_section(story, "9. 현금흐름", dataframe_for_pdf(cash_display), styles)
     report_section(story, "10. 손익분기점", dataframe_for_pdf(formatted_break_even_table(model_result["break_even"], currency)), styles)
 
-    doc.build(story)
+    def draw_footer(canvas, doc_obj):
+        canvas.saveState()
+        canvas.setFont("HYGothic-Medium", 7)
+        canvas.setFillColor(colors.HexColor("#777777"))
+        canvas.drawString(12 * mm, 7 * mm, "Business Profitability Assessment")
+        canvas.drawRightString(285 * mm, 7 * mm, f"Page {doc_obj.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return output.getvalue()
 
 
@@ -759,7 +995,7 @@ def main() -> None:
 
     with pdf_tab:
         st.subheader("PDF 보고서 추출")
-        st.caption("현재 입력값과 결과 대시보드를 하나의 PDF 보고서로 저장합니다.")
+        st.caption("현재 입력값, 핵심 KPI, 대시보드 차트, 손익표를 전문 보고서 형식의 PDF로 저장합니다.")
         pdf_bytes = build_pdf_report(
             assumptions,
             st.session_state["revenue_df"],
@@ -780,7 +1016,7 @@ def main() -> None:
             포함 항목:
             - 기본 설정, 성장률, 초기투자비
             - 매출 입력, 비용 입력, 인력 입력
-            - 핵심 KPI, 손익계산서, 현금흐름, 손익분기점
+            - 핵심 KPI, 대시보드 차트, 손익계산서, 현금흐름, 손익분기점
             """
         )
 
