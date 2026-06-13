@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>사업 수익성 분석 HTML 프로토타입</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; color: #222; }
+    h1 { margin-bottom: 4px; }
+    .note { color: #666; margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fafafa; }
+    label { display: block; font-size: 12px; color: #555; margin-bottom: 4px; }
+    input, select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th { background: #1F4E78; color: white; }
+    button { border: 0; border-radius: 8px; padding: 9px 12px; cursor: pointer; background: #1F4E78; color: white; }
+    button.secondary { background: #666; }
+    .row-actions { display: flex; gap: 8px; margin-bottom: 20px; }
+    .chart { border: 1px solid #ddd; border-radius: 12px; padding: 12px; overflow-x: auto; }
+    .small { font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>사업 수익성 분석 HTML 프로토타입</h1>
+  <p class="note">설치 없이 브라우저에서 열 수 있는 단일 파일 예시입니다. 실무용 Excel 다운로드와 상세 인력계획은 Streamlit 버전을 권장합니다.</p>
+
+  <section class="grid">
+    <div><label>사업명</label><input id="businessName" value="HTML 샘플 사업"></div>
+    <div><label>업종</label><input id="industry" value="서비스업"></div>
+    <div><label>분석기간(년)</label><input id="years" type="number" min="1" max="10" value="5"></div>
+    <div><label>세율(%)</label><input id="taxRate" type="number" value="10" step="0.5"></div>
+    <div><label>초기투자비</label><input id="initialInvestment" type="number" value="50000000" step="1000000"></div>
+    <div><label>매출 성장률(%)</label><input id="revenueGrowth" type="number" value="5" step="0.5"></div>
+    <div><label>비용 증가율(%)</label><input id="costGrowth" type="number" value="3" step="0.5"></div>
+  </section>
+
+  <h2>매출 항목</h2>
+  <p class="small">단가와 월 수량을 입력합니다. 연간 매출은 단가 × 월 수량 × 12로 계산합니다.</p>
+  <table id="revenueTable">
+    <thead><tr><th>항목명</th><th>단가</th><th>월 수량/이용자</th><th>삭제</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row-actions"><button onclick="addRevenueRow()">매출항목 추가</button></div>
+
+  <h2>비용 항목</h2>
+  <p class="small">고정비는 월비용 × 12, 매출연동비는 총매출 × 매출대비비율로 계산합니다.</p>
+  <table id="costTable">
+    <thead><tr><th>항목명</th><th>유형</th><th>월비용</th><th>매출대비비율(%)</th><th>삭제</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row-actions"><button onclick="addCostRow()">비용항목 추가</button><button class="secondary" onclick="calculate()">계산하기</button></div>
+
+  <h2>핵심 KPI</h2>
+  <section class="grid" id="kpiCards"></section>
+
+  <h2>연도별 결과</h2>
+  <table id="resultTable"></table>
+
+  <h2>간단 차트</h2>
+  <div class="chart" id="chartArea"></div>
+
+<script>
+function money(v) { return Math.round(v).toLocaleString('ko-KR') + '원'; }
+function pct(v) { return (v * 100).toFixed(1) + '%'; }
+function num(id) { return Number(document.getElementById(id).value || 0); }
+
+function addRevenueRow(name='기본 서비스', price=80000, qty=200) {
+  const tbody = document.querySelector('#revenueTable tbody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input value="${name}"></td>
+    <td><input type="number" value="${price}" step="1000"></td>
+    <td><input type="number" value="${qty}" step="1"></td>
+    <td><button class="secondary" onclick="this.closest('tr').remove(); calculate();">삭제</button></td>`;
+  tbody.appendChild(tr);
+}
+
+function addCostRow(name='마케팅비', type='fixed', monthly=1000000, rate=0) {
+  const tbody = document.querySelector('#costTable tbody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input value="${name}"></td>
+    <td><select><option value="fixed" ${type==='fixed'?'selected':''}>고정비</option><option value="revenue" ${type==='revenue'?'selected':''}>매출연동비</option></select></td>
+    <td><input type="number" value="${monthly}" step="100000"></td>
+    <td><input type="number" value="${rate}" step="0.5"></td>
+    <td><button class="secondary" onclick="this.closest('tr').remove(); calculate();">삭제</button></td>`;
+  tbody.appendChild(tr);
+}
+
+function calculate() {
+  const years = Math.max(1, Math.min(10, num('years')));
+  const taxRate = num('taxRate') / 100;
+  const revenueGrowth = num('revenueGrowth') / 100;
+  const costGrowth = num('costGrowth') / 100;
+  const initialInvestment = num('initialInvestment');
+
+  const revenueBases = [...document.querySelectorAll('#revenueTable tbody tr')].map(tr => {
+    const inputs = tr.querySelectorAll('input');
+    return { name: inputs[0].value, base: Number(inputs[1].value || 0) * Number(inputs[2].value || 0) * 12 };
+  });
+  const costRows = [...document.querySelectorAll('#costTable tbody tr')].map(tr => {
+    const inputs = tr.querySelectorAll('input');
+    const type = tr.querySelector('select').value;
+    return { name: inputs[0].value, type, monthly: Number(inputs[1].value || 0), rate: Number(inputs[2].value || 0) / 100 };
+  });
+
+  const results = [];
+  let cumulativeCash = -initialInvestment;
+  for (let i=0; i<years; i++) {
+    const revenue = revenueBases.reduce((s, r) => s + r.base * Math.pow(1 + revenueGrowth, i), 0);
+    const fixedCost = costRows.filter(c => c.type === 'fixed').reduce((s, c) => s + c.monthly * 12 * Math.pow(1 + costGrowth, i), 0);
+    const variableCost = costRows.filter(c => c.type === 'revenue').reduce((s, c) => s + revenue * c.rate, 0);
+    const totalCost = fixedCost + variableCost;
+    const operatingIncome = revenue - totalCost;
+    const tax = Math.max(0, operatingIncome * taxRate);
+    const netIncome = operatingIncome - tax;
+    cumulativeCash += netIncome;
+    const variableRate = revenue ? variableCost / revenue : 0;
+    const beRevenue = (1 - variableRate) > 0 ? fixedCost / (1 - variableRate) : 0;
+    results.push({ year: 'Year ' + (i+1), revenue, totalCost, operatingIncome, netIncome, cumulativeCash, beRevenue });
+  }
+  renderResults(results, initialInvestment);
+}
+
+function renderResults(results, initialInvestment) {
+  const totalRevenue = results.reduce((s, r) => s + r.revenue, 0);
+  const totalCost = results.reduce((s, r) => s + r.totalCost, 0);
+  const totalNet = results.reduce((s, r) => s + r.netIncome, 0);
+  const roi = initialInvestment ? totalNet / initialInvestment : 0;
+  document.getElementById('kpiCards').innerHTML = `
+    <div class="card"><label>총매출</label><strong>${money(totalRevenue)}</strong></div>
+    <div class="card"><label>총비용</label><strong>${money(totalCost)}</strong></div>
+    <div class="card"><label>순이익</label><strong>${money(totalNet)}</strong></div>
+    <div class="card"><label>ROI</label><strong>${pct(roi)}</strong></div>`;
+
+  let html = '<thead><tr><th>연도</th><th>총매출</th><th>총비용</th><th>영업이익</th><th>순이익</th><th>누적현금흐름</th><th>손익분기매출</th></tr></thead><tbody>';
+  results.forEach(r => {
+    html += `<tr><td>${r.year}</td><td>${money(r.revenue)}</td><td>${money(r.totalCost)}</td><td>${money(r.operatingIncome)}</td><td>${money(r.netIncome)}</td><td>${money(r.cumulativeCash)}</td><td>${money(r.beRevenue)}</td></tr>`;
+  });
+  html += '</tbody>';
+  document.getElementById('resultTable').innerHTML = html;
+
+  const maxValue = Math.max(...results.map(r => Math.max(r.revenue, r.totalCost, r.netIncome, r.beRevenue)), 1);
+  const width = Math.max(720, results.length * 130);
+  const height = 300;
+  let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="연도별 매출 비용 차트">`;
+  svg += '<line x1="50" y1="250" x2="' + (width-20) + '" y2="250" stroke="#999" />';
+  results.forEach((r, i) => {
+    const x = 70 + i * 120;
+    const revH = 220 * r.revenue / maxValue;
+    const costH = 220 * r.totalCost / maxValue;
+    svg += `<rect x="${x}" y="${250-revH}" width="35" height="${revH}" fill="#4e79a7"><title>${r.year} 매출 ${money(r.revenue)}</title></rect>`;
+    svg += `<rect x="${x+40}" y="${250-costH}" width="35" height="${costH}" fill="#f28e2b"><title>${r.year} 비용 ${money(r.totalCost)}</title></rect>`;
+    svg += `<text x="${x}" y="275" font-size="12">${r.year}</text>`;
+  });
+  svg += '<text x="50" y="20" font-size="14">파란색: 매출 / 주황색: 비용</text></svg>';
+  document.getElementById('chartArea').innerHTML = svg;
+}
+
+addRevenueRow('월 멤버십', 80000, 300);
+addRevenueRow('컨설팅', 500000, 10);
+addCostRow('플랫폼 수수료', 'revenue', 0, 3);
+addCostRow('임대료', 'fixed', 2000000, 0);
+addCostRow('마케팅비', 'fixed', 3000000, 0);
+calculate();
+</script>
+</body>
+</html>
